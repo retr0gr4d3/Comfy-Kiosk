@@ -145,7 +145,7 @@ export function parseWmiDriverVersions(stdout: string): Map<string, string> {
  * `systeminformation` only fills `driverVersion` for NVIDIA on Windows (it
  * enriches from nvidia-smi) and leaves AMD/Intel blank, even though WMI
  * carries `DriverVersion` for every adapter. We read it directly so AMD/Intel
- * driver telemetry is populated. Returns an empty map off-Windows or on error.
+ * driver versions are populated. Returns an empty map off-Windows or on error.
  */
 export function getWindowsGpuDriverVersions(): Promise<Map<string, string>> {
   if (process.platform !== 'win32') return Promise.resolve(new Map())

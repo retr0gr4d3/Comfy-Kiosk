@@ -313,64 +313,6 @@
   Pop $1
 !macroend
 
-!macro persistWebsiteAnonymousIdFromInstallerName
-  Push $R0
-  Push $R1
-  Push $R2
-  Push $R3
-  Push $R4
-  Push $R5
-
-  ; GTM-277: the Router serves the signed installer as
-  ;   Comfy-Desktop-Setup-phid1_<website PostHog $device_id>.exe
-  ; carrying the raw 36-char lowercase UUID. Desktop re-validates the shape
-  ; before adopting it.
-  ;
-  ; Per-machine installs run elevated, possibly as a different account
-  ; (over-the-shoulder UAC, SYSTEM), so per-user shell folders resolve to
-  ; the wrong profile — skip the carrier entirely.
-  ${If} $installMode != "all"
-  SetShellVarContext current
-  StrCpy $R2 "$APPDATA\Comfy Desktop" ; Electron's packaged userData path
-  ; A plain installer must not leave a stale carrier from an earlier unlaunched setup.
-  Delete "$R2\pending-website-anonymous-id.txt"
-
-  ${GetFileName} "$EXEPATH" $R0
-  StrLen $R5 "$R0"
-  StrCpy $R4 ""
-
-  ; 26-char prefix + 36-char UUID = 62. The tail (extension, browser " (1)"
-  ; duplicate suffixes) is deliberately ignored — the payload is fixed-length.
-  ${If} $R5 >= 62
-    StrCpy $R1 "$R0" 26
-    ${If} $R1 S== "Comfy-Desktop-Setup-phid1_"
-      StrCpy $R4 "$R0" 36 26
-    ${EndIf}
-  ${EndIf}
-
-  StrLen $R3 "$R4"
-  ${If} $R3 == 36
-    CreateDirectory "$R2"
-    ClearErrors
-    FileOpen $R3 "$R2\pending-website-anonymous-id.txt" w
-    ${IfNot} ${Errors}
-      FileWrite $R3 "$R4$\r$\n"
-      FileClose $R3
-      DetailPrint "  Website attribution identity stored."
-    ${Else}
-      DetailPrint "  Website attribution identity could not be stored."
-    ${EndIf}
-  ${EndIf}
-  ${EndIf}
-
-  Pop $R5
-  Pop $R4
-  Pop $R3
-  Pop $R2
-  Pop $R1
-  Pop $R0
-!macroend
-
 !macro customInstall
   ; VC++ Redistributable is now installed by the -VcRedistPreInstall
   ; Section declared in customHeader so it runs BEFORE shortcuts are
@@ -386,7 +328,6 @@
   ; like an install log instead of jumping from "Step 2 — Extracting…"
   ; straight to the Finish page.
   SetDetailsPrint both
-  !insertmacro persistWebsiteAnonymousIdFromInstallerName
   DetailPrint "  Application files installed to: $INSTDIR"
   DetailPrint "  Registered with Add or Remove Programs"
   DetailPrint "  Start Menu shortcut created"

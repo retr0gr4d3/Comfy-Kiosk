@@ -36,11 +36,6 @@ vi.mock('../stores/sessionStore', () => ({
   })
 }))
 
-vi.mock('../lib/telemetry', () => ({
-  emitTelemetryAction: vi.fn(),
-  toErrorBucket: () => 'unknown'
-}))
-
 const mockRunAction = vi.hoisted(() => vi.fn())
 ;(globalThis as unknown as { window: { api: { runAction: typeof mockRunAction } } }).window = {
   api: { runAction: mockRunAction }
@@ -87,7 +82,7 @@ describe('useListAction — desktop launch interceptor', () => {
       .mockResolvedValueOnce({ ok: true }) // launch on adopted
 
     const showProgress = vi.fn()
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
 
     await executeAction(makeInstall({ adopted: false }), launchAction)
 
@@ -107,7 +102,7 @@ describe('useListAction — desktop launch interceptor', () => {
   it('on cancel: emits nothing — neither migrate nor launch run', async () => {
     mockModalConfirm.mockResolvedValueOnce(false)
     const showProgress = vi.fn()
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
 
     await executeAction(makeInstall({ adopted: false }), launchAction)
 
@@ -117,7 +112,7 @@ describe('useListAction — desktop launch interceptor', () => {
 
   it('skips the interceptor when the install is already adopted', async () => {
     const showProgress = vi.fn()
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
 
     await executeAction(makeInstall({ adopted: true }), {
       ...launchAction,
@@ -134,7 +129,7 @@ describe('useListAction — desktop launch interceptor', () => {
 
   it('skips the interceptor for non-desktop sources', async () => {
     const showProgress = vi.fn()
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
 
     await executeAction(makeInstall({ sourceId: 'standalone', sourceCategory: 'local' }), {
       ...launchAction,
@@ -150,7 +145,7 @@ describe('useListAction — desktop launch interceptor', () => {
     mockRunAction.mockResolvedValueOnce({ ok: false, message: 'no-legacy-install' })
 
     const showProgress = vi.fn()
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
     await executeAction(makeInstall({ adopted: false }), launchAction)
 
     const opts = showProgress.mock.calls[0]![0] as { apiCall: () => Promise<unknown> }
@@ -188,7 +183,7 @@ describe('useListAction.executeAction onGuardsPassed hook', () => {
   it('fires onGuardsPassed when every guard resolves positively', async () => {
     const onGuardsPassed = vi.fn(async () => {})
     const showProgress = vi.fn()
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
 
     await executeAction(INSTALL, LAUNCH_ACTION, { onGuardsPassed })
 
@@ -203,7 +198,7 @@ describe('useListAction.executeAction onGuardsPassed hook', () => {
 
   it('forwards restart intent to the local-instance launch guard', async () => {
     const showProgress = vi.fn()
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
 
     await executeAction(INSTALL, LAUNCH_ACTION, { isRestart: true })
 
@@ -219,7 +214,7 @@ describe('useListAction.executeAction onGuardsPassed hook', () => {
       enabled: false,
       disabledMessage: 'Cannot launch right now'
     }
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
 
     await executeAction(INSTALL, disabledAction, { onGuardsPassed })
 
@@ -232,7 +227,7 @@ describe('useListAction.executeAction onGuardsPassed hook', () => {
     mockCheckBeforeAction.mockResolvedValueOnce(false)
     const onGuardsPassed = vi.fn()
     const showProgress = vi.fn()
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
 
     await executeAction(INSTALL, LAUNCH_ACTION, { onGuardsPassed })
 
@@ -248,7 +243,7 @@ describe('useListAction.executeAction onGuardsPassed hook', () => {
       ...LAUNCH_ACTION,
       confirm: { title: 'Sure?', message: 'Really?' }
     }
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
 
     await executeAction(INSTALL, confirmedAction, { onGuardsPassed })
 
@@ -260,7 +255,7 @@ describe('useListAction.executeAction onGuardsPassed hook', () => {
     mockCheckBeforeLaunch.mockResolvedValueOnce(false)
     const onGuardsPassed = vi.fn()
     const showProgress = vi.fn()
-    const { executeAction } = useListAction('chooser', { showProgress })
+    const { executeAction } = useListAction({ showProgress })
 
     await executeAction(INSTALL, LAUNCH_ACTION, { onGuardsPassed })
 

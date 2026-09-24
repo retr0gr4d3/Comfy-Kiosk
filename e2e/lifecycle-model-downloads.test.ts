@@ -141,7 +141,6 @@ async function launch(): Promise<void> {
     profileDir,
     settings: {
       firstUseCompleted: true,
-      telemetryEnabled: false,
       modelsDirs: [modelRoot]
     }
   })

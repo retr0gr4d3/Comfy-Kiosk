@@ -2,7 +2,7 @@
  * E2E: payload-controlled wording for the Core beta activation notice.
  *
  * The companion spec (`beta-activation-notice.test.ts`) covers the generic card and the whole
- * trigger path. This one covers only what the PostHog payload adds: a `description` reaching
+ * trigger path. This one covers only what the ops-flag payload adds: a `description` reaching
  * the card as a feature name, through the real parser and the real launch.
  *
  * Tagged `@linux` only, for the two reasons documented in `fakeComfyInstall.ts`: the
@@ -35,20 +35,12 @@ const FEATURE_NAME = 'Asset library'
 let ctx: AppContext
 let installPath: string
 let port: number
-let previousPosthogHost: string | undefined
-
-/** See the companion spec: a closed port makes the flag fetch `unreachable`, which is the
- *  documented path where the persisted `ops-flags.json` is authoritative. */
-const UNREACHABLE_POSTHOG_HOST = 'http://127.0.0.1:1'
 
 function coachmarkPopup(app: ElectronApplication): WebContentsPage {
   return new WebContentsPage(app, 'comfyTitleTooltip')
 }
 
 test.beforeAll(async () => {
-  previousPosthogHost = process.env['POSTHOG_HOST']
-  process.env['POSTHOG_HOST'] = UNREACHABLE_POSTHOG_HOST
-
   installPath = await mkdtemp(path.join(os.tmpdir(), 'comfyui-beta-notice-named-'))
   port = await reserveFreePort()
   await writeFakeComfyInstall({ installPath, port })
@@ -56,7 +48,6 @@ test.beforeAll(async () => {
   ctx = await launchApp({
     settings: {
       firstUseCompleted: true,
-      telemetryEnabled: true,
       betaFeaturesEnabled: true,
       hasSeenCentralPillHint: true
     },
@@ -94,8 +85,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await ctx?.cleanup()
   if (installPath) await rm(installPath, { recursive: true, force: true })
-  if (previousPosthogHost === undefined) delete process.env['POSTHOG_HOST']
-  else process.env['POSTHOG_HOST'] = previousPosthogHost
 })
 
 test('a payload-supplied feature name reaches the card @linux', async () => {

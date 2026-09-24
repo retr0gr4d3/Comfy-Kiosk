@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useTimeoutFn } from '@vueuse/core'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, ArrowLeft, Loader2, Search, SearchX, X } from 'lucide-vue-next'
 import BaseInput from '../../components/ui/BaseInput.vue'
@@ -8,7 +7,6 @@ import BaseSelect, { type BaseSelectOption } from '../../components/ui/BaseSelec
 import ArgsRawInput from './ArgsRawInput.vue'
 import type { ComfyArgDef } from '../../types/ipc'
 import { parseArgs, serialize } from '../../lib/argsParser'
-import { emitTelemetryAction } from '../../lib/telemetry'
 import { scoreName } from '../../utils/fuzzyMatch'
 
 /**
@@ -78,52 +76,13 @@ async function fetchSchema(): Promise<void> {
   }
 }
 
-/** The edit waiting out the debounce, if any. Deliberately not a `ref` -
- *  nothing renders it; it exists so `onBeforeUnmount` can still flush it. */
-let pendingArgsChange: { argKey: string; valueKind: ComfyArgDef['type'] } | null = null
-
-function flushArgsChanged(): void {
-  const pending = pendingArgsChange
-  if (!pending) return
-  pendingArgsChange = null
-  emitTelemetryAction('comfy.desktop.args.changed', {
-    installation_id: props.installationId,
-    arg_key: pending.argKey,
-    value_kind: pending.valueKind
-  })
-}
-
-// `start()` clears any armed timer before setting a new one, which is the
-// 500ms debounce that keeps text-input args from emitting per keystroke.
-// `useDebounceFn` would read more directly but hands back a bare function with
-// no cancel or flush, and this one has to be flushable on unmount.
-const { start: scheduleArgsChanged, stop: cancelArgsChanged } = useTimeoutFn(
-  flushArgsChanged,
-  500,
-  { immediate: false }
-)
-
-function emitArgsChanged(argKey: string, valueKind: ComfyArgDef['type']): void {
-  pendingArgsChange = { argKey, valueKind }
-  scheduleArgsChanged()
-}
-
 onMounted(() => {
-  emitTelemetryAction('comfy.desktop.args.builder.opened', {
-    installation_id: props.installationId
-  })
   void fetchSchema()
 })
 
 // Flush the final value if the page closes mid-debounced edit.
 onBeforeUnmount(() => {
   if (localValue.value !== props.initialValue) emit('update', localValue.value)
-  // And the same for the debounced telemetry: an edit made in the last 500ms
-  // is still an edit. Left armed it either lands after the user has moved on,
-  // or - when the unmount is the settings window closing - never ships at all,
-  // quietly undercounting exactly the change-then-leave case.
-  cancelArgsChanged()
-  flushArgsChanged()
 })
 
 const parsed = computed(() => parseArgs(localValue.value, schema.value))
@@ -158,14 +117,12 @@ function toggleFlag(def: ComfyArgDef): void {
     next.set(def.name, '')
   }
   commit(next)
-  emitArgsChanged(def.name, def.type)
 }
 
 function setValue(def: ComfyArgDef, value: string): void {
   const next = new Map(parsed.value.known)
   next.set(def.name, value)
   commit(next)
-  emitArgsChanged(def.name, def.type)
 }
 
 function selectExclusive(group: string, name: string): void {
@@ -177,8 +134,6 @@ function selectExclusive(group: string, name: string): void {
   }
   next.set(name, '')
   commit(next)
-  const chosen = schema.value.find((a) => a.name === name)
-  if (chosen) emitArgsChanged(chosen.name, chosen.type)
 }
 
 // Backs the select's synthetic "None" option, which clears the group (a plain

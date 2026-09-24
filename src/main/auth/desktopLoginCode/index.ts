@@ -23,8 +23,7 @@ import {
 import { detectFirebaseEnv, getFirebaseConfig } from '../firebaseBridge/config'
 import { abortableSleep } from '../firebaseBridge/flowControl'
 import {
-  bindSignedInUser,
-  emitSignInFailure,
+  describeSignInFailure,
   type HandleFirebasePopupOpts,
   isOnOrigin,
   originOf
@@ -36,9 +35,6 @@ import {
 } from '../firebaseBridge/inject'
 import { extractProviderId } from '../firebaseBridge/intercept'
 import { restoreParentWindow } from '../firebaseBridge/restoreParentWindow'
-import { getDeviceId } from '../../lib/deviceId'
-import * as mainTelemetry from '../../lib/telemetry'
-import * as settings from '../../settings'
 
 /** Budget for the code-create POST; past this the legacy bridge takes over. */
 const CREATE_CODE_TIMEOUT_MS = 8000
@@ -121,7 +117,7 @@ export async function signInViaDesktopLoginCode(
   const sessionInjection = beginFirebaseSessionInjection(comfyContents)
 
   // The Cloud page owns provider choice when Firebase omitted or supplied an
-  // unsupported providerId, so keep that widened path visible in the funnel.
+  // unsupported providerId.
   const provider = extractProviderId(interceptedAuthUrl) ?? 'cloud'
   const firebaseConfig = getFirebaseConfig(firebaseEnv)
   const codeVerifier = createCodeVerifier()
@@ -130,12 +126,6 @@ export async function signInViaDesktopLoginCode(
     platform: process.platform,
     app_version: app.getVersion(),
     code_challenge: codeChallengeS256(codeVerifier)
-  }
-  // installation_id enables the web->desktop identity stitch. Consent-gated
-  // like every other telemetry write ('undecided' omits too); the auth
-  // handoff itself works without it.
-  if (settings.get('telemetryEnabled') === true) {
-    request.installation_id = getDeviceId()
   }
 
   let grant: DesktopLoginCodeGrant
@@ -147,7 +137,7 @@ export async function signInViaDesktopLoginCode(
   } catch {
     // Backend without the endpoint (404), network trouble, or timeout —
     // the browser never opened, so the legacy bridge can take over
-    // transparently and emit its own funnel events. A superseded attempt
+    // transparently. A superseded attempt
     // reports 'handled' instead so the caller doesn't start a second
     // sign-in underneath the newer one.
     if (activeFlow === controller) activeFlow = null
@@ -160,19 +150,10 @@ export async function signInViaDesktopLoginCode(
     return 'handled'
   }
 
-  // Same funnel entry as the legacy bridge; `flow` splits the two sign-in
-  // mechanisms apart in analytics. Emitted only once the code exists —
-  // just before the browser opens — so a create-failure fallback doesn't
-  // double-count with the legacy path's own started event.
-  mainTelemetry.capture('comfy.desktop.auth.sign_in_started', {
-    provider,
-    flow: DESKTOP_LOGIN_CODE_FLOW
-  })
-
   let retriedPollErrors = 0
   try {
-    // Only the opaque one-time code transits the browser — never
-    // installation_id or any auth material.
+    // Only the opaque one-time code transits the browser — never any auth
+    // material.
     const loginUrl = new URL('/cloud/login', cloudOrigin)
     loginUrl.searchParams.set('desktop_login_code', grant.code)
     openExternalSafely(loginUrl.href)
@@ -257,19 +238,13 @@ export async function signInViaDesktopLoginCode(
     )
     if (!injected) return 'handled'
     if (controller.signal.aborted) return 'handled'
-    // Bind only after the session was successfully installed. The injected
-    // session reloads hosted Cloud views, so the bind holds this user as
-    // pending and the consensus layer identifies — and emits the login
-    // attribution — once a document re-reports the same UID. Local/legacy
-    // views confirm through their scoped reporter the same way.
-    bindSignedInUser(user, comfyContents, { via: 'desktop_login_code' })
     restoreParentWindow(opts.parentWindow)
     return 'handled'
   } catch (err) {
     // A superseded attempt isn't a failure — the newer one owns the UX.
     if (controller.signal.aborted) return 'handled'
     const error = err instanceof Error ? err : new Error(String(err))
-    const failure = emitSignInFailure(provider, DESKTOP_LOGIN_CODE_FLOW, error, {
+    const failure = describeSignInFailure(provider, DESKTOP_LOGIN_CODE_FLOW, error, {
       retried_poll_errors: retriedPollErrors
     })
     opts.onError?.(failure)

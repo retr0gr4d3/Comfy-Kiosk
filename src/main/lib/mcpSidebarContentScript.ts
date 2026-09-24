@@ -9,12 +9,6 @@ var STATE = window.__comfyDesktopMcpSidebar;
 var SEEN_KEY = ${JSON.stringify(SEEN_KEY)};
 var BTN_ID = 'comfy-desktop-mcp-btn';
 
-function track(name, props) {
-  try {
-    window.__comfyDesktop2.Telemetry.capture('comfy.desktop.mcp.' + name, props || {});
-  } catch (e) {}
-}
-
 function isSeen() {
   try { return window.localStorage.getItem(SEEN_KEY) === '1'; } catch (e) { return false; }
 }
@@ -25,7 +19,6 @@ function markSeen() {
 function openSetup() {
   markSeen();
   hideDot();
-  track('sidebar_opened', {});
   try {
     var result = window.__comfyDesktop2.openMcpSetup();
     if (result && typeof result.catch === 'function') result.catch(function () {});

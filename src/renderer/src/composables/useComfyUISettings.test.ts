@@ -50,11 +50,6 @@ vi.mock('./useMigrateAction', () => ({
   })
 }))
 
-vi.mock('../lib/telemetry', () => ({
-  emitTelemetryAction: vi.fn(),
-  toErrorBucket: () => 'other'
-}))
-
 import { useComfyUISettings } from './useComfyUISettings'
 import { useSessionStore } from '../stores/sessionStore'
 import type {

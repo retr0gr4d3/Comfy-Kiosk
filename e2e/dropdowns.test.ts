@@ -31,7 +31,7 @@ let popup: WebContentsPage
 test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(async () => {
-  ctx = await launchApp({ settings: { firstUseCompleted: true, telemetryEnabled: false } })
+  ctx = await launchApp({ settings: { firstUseCompleted: true } })
   popup = titlePopupPage(ctx.app)
 })
 

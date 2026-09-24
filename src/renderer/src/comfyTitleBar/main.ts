@@ -4,13 +4,7 @@ import { loadProprietaryFonts } from '../assets/proprietaryFonts'
 
 import { createApp } from 'vue'
 import TitleBarApp from './TitleBarApp.vue'
-import { initializeRendererBootstrap } from '../lib/rendererBootstrap'
 import { createAppI18n } from '../lib/i18nFactory'
-
-// The title bar survives mode flips (unlike the panel renderer), so bootstrapping
-// telemetry here is what makes RUM/PostHog see steady-state ComfyUI sessions. Main
-// also relays its own events to this renderer so they reach RUM too.
-initializeRendererBootstrap('title-bar')
 
 // Default to dark before mount so design tokens resolve immediately; only matters for
 // the brief moment before main's first theme push.

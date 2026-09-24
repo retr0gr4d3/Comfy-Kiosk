@@ -2,7 +2,6 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { readGitHead, rollbackComfySource } from './git'
-import * as telemetry from './telemetry'
 
 // Sentinel written to the install dir while an update/restore is moving ComfyUI's
 // git source. Cleared once the operation finishes consistently. If it survives to
@@ -157,9 +156,6 @@ export async function recoverInterruptedComfyOp(
     if (!ok || readGitHead(comfyuiDir) !== marker.preHead) {
       const attempts = (marker.recoveryAttempts ?? 0) + 1
       const gaveUp = attempts >= MAX_RECOVERY_ATTEMPTS
-      // Reliability signal (mirrored to Datadog): how often a hard-killed op
-      // leaves source we can't roll back, and how often we give up entirely.
-      telemetry.emit('comfy.desktop.recovery.failed', { op: marker.op, attempts, gave_up: gaveUp })
       const backupHint = backupBranchHint(marker.backupBranch)
       if (gaveUp) {
         // Rollback can't succeed (e.g. the pre-op commit is gone). Stop blocking:
@@ -183,8 +179,6 @@ export async function recoverInterruptedComfyOp(
         `could not roll ComfyUI source back to ${marker.preHead.slice(0, 7)} after an interrupted ${marker.op}.${backupHint}`
       )
     }
-    // Successfully recovered a hard-killed op — informational signal (PostHog).
-    telemetry.emit('comfy.desktop.recovery.rolled_back', { op: marker.op })
     onRollback?.()
   }
   await clearOpMarker(installPath)

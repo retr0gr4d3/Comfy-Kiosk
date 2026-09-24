@@ -1,4 +1,3 @@
-import { withCloudDistributionUtm } from '../lib/cloudUrl'
 import { createUrlSource } from './common/urlSource'
 
 export const cloud = createUrlSource({
@@ -6,6 +5,5 @@ export const cloud = createUrlSource({
   labelKey: 'cloud.label',
   descKey: 'cloud.desc',
   category: 'cloud',
-  defaultUrl: 'https://cloud.comfy.org/',
-  transformUrl: withCloudDistributionUtm
+  defaultUrl: 'https://cloud.comfy.org/'
 })

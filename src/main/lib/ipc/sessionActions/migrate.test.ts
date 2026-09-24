@@ -21,12 +21,6 @@ vi.mock('../../i18n', () => ({
   getLocale: () => 'en'
 }))
 
-vi.mock('../../telemetry', () => ({
-  capture: vi.fn(),
-  bucketError: vi.fn(() => 'other'),
-  trackedStep: vi.fn(async (_step: string, _ctx: unknown, fn: () => Promise<unknown>) => fn())
-}))
-
 const { performLocalMigrationMock, adoptDesktopInstallMock, ipcMainHandlers } = vi.hoisted(() => ({
   performLocalMigrationMock: vi.fn(),
   adoptDesktopInstallMock: vi.fn(),

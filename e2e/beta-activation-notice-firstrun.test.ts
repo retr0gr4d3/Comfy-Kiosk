@@ -3,8 +3,7 @@
  *
  * Every gate the notice depends on is exercised for real here rather than stubbed:
  *
- *   - the grant arrives the way a returning user's does, from `ops-flags.json` (PostHog is
- *     unreachable under the harness, so `coreBetaGrants` falls back to the persisted value);
+ *   - the grant arrives the way a returning user's does, from the local `ops-flags.json`;
  *   - it clears the version window against the seeded `comfyVersion`;
  *   - it clears the running core's args schema, parsed from a real `main.py --help` spawn;
  *   - the launch spawns, the stub serves, the boot wait succeeds and the window attaches;
@@ -46,7 +45,6 @@ const GRANT_ARG = '--enable-assets'
 /** Comfortably below the seeded `baseTag`, so the version window opens. */
 const GRANT_MIN_CORE = '0.3.80'
 
-
 let ctx: AppContext
 let installPath: string
 
@@ -57,18 +55,7 @@ function coachmarkPopup(app: ElectronApplication): WebContentsPage {
   return new WebContentsPage(app, 'comfyTitleTooltip')
 }
 
-
-/** PostHog's own value for the flag wins over the persisted one, and a live fetch would make
- *  this run depend on a real project's flag state. Pointing the SDK at a closed port makes the
- *  fetch `unreachable`, which is the documented path where `ops-flags.json` is authoritative —
- *  the same path an offline launch takes for a user who already has the grant. */
-const UNREACHABLE_POSTHOG_HOST = 'http://127.0.0.1:1'
-let previousPosthogHost: string | undefined
-
 test.beforeAll(async () => {
-  previousPosthogHost = process.env['POSTHOG_HOST']
-  process.env['POSTHOG_HOST'] = UNREACHABLE_POSTHOG_HOST
-
   installPath = await mkdtemp(path.join(os.tmpdir(), 'comfyui-beta-notice-firstrun-'))
   port = await reserveFreePort()
   await writeFakeComfyInstall({ installPath, port })
@@ -76,8 +63,7 @@ test.beforeAll(async () => {
   ctx = await launchApp({
     settings: {
       firstUseCompleted: true,
-      // Beta grants are gated on the opt-in, which is itself gated on consent.
-      telemetryEnabled: true,
+      // Beta grants are gated on the opt-in.
       betaFeaturesEnabled: true,
       // Deliberately NOT spent: this spec exists to drive the genuine first-run collision,
       // where the onboarding hint and the beta notice contend for the one shared popup.
@@ -116,8 +102,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await ctx?.cleanup()
   if (installPath) await rm(installPath, { recursive: true, force: true })
-  if (previousPosthogHost === undefined) delete process.env['POSTHOG_HOST']
-  else process.env['POSTHOG_HOST'] = previousPosthogHost
 })
 
 /**

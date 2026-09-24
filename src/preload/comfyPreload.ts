@@ -3,14 +3,12 @@ import type { IpcRendererEvent } from 'electron'
 import type {
   ComfyDesktop2BridgeImplementation,
   ComfyDesktop2LogsBridge,
-  ComfyDesktop2TelemetryBridge,
   ComfyDesktop2TerminalBridge,
   ComfyDownloadProgress,
   LogsOutputMsg,
   LogsRestore,
   TerminalRestore
 } from '../types/comfyDesktopBridge'
-import { startLocalFirebaseAuthMonitor } from './localFirebaseAuthMonitor'
 
 export type LegacyTerminalBridge = ComfyDesktop2TerminalBridge & {
   restore(): Promise<TerminalRestore>
@@ -20,14 +18,6 @@ const EMPTY_TERMINAL_RESTORE: TerminalRestore = {
   buffer: [],
   size: { cols: 80, rows: 30 },
   exited: true
-}
-
-function sendTelemetry(channel: string, payload: unknown): void {
-  try {
-    ipcRenderer.send(channel, payload)
-  } catch {
-    // Telemetry must never break hosted frontend code.
-  }
 }
 
 function openTerminal(): Promise<boolean> {
@@ -84,28 +74,6 @@ const Logs: ComfyDesktop2LogsBridge = {
   }
 }
 
-const reportFirebaseAuthState: NonNullable<
-  ComfyDesktop2TelemetryBridge['reportFirebaseAuthState']
-> = (state): void => sendTelemetry('telemetry:firebaseAuthState', state)
-
-const captureException: NonNullable<ComfyDesktop2TelemetryBridge['captureException']> = (
-  error,
-  properties
-): void =>
-  sendTelemetry('telemetry:captureException', {
-    message: error.message,
-    ...(error.stack ? { stack: error.stack } : {}),
-    properties
-  })
-
-const Telemetry: ComfyDesktop2TelemetryBridge = {
-  capture: (event, properties): void => sendTelemetry('telemetry:capture', { event, properties }),
-  captureException,
-  reportFirebaseAuthState
-}
-
-startLocalFirebaseAuthMonitor(reportFirebaseAuthState)
-
 const bridge = {
   isRemote: (): boolean => ipcRenderer.sendSync('desktop2-is-remote') as boolean,
   openModelAccessPage: (url: string): Promise<boolean> => {
@@ -142,8 +110,7 @@ const bridge = {
   openTerminal,
   openMcpSetup,
   Terminal,
-  Logs,
-  Telemetry
+  Logs
 } satisfies ComfyDesktop2BridgeImplementation
 
 contextBridge.exposeInMainWorld('__comfyDesktop2', bridge)

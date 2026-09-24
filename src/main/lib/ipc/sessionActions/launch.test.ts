@@ -130,21 +130,17 @@ vi.mock('../../hardwareTap', async (importOriginal) => {
 
 import {
   attachLaunchStreams,
-  createAssetsTapSafe,
   buildLaunchArgs,
   desktopFeatureFlags,
   emitCoreBetaRecords,
-  emitCoreBetaTelemetry,
   handleLaunch,
   isCrashedExit,
-  launchedCoreCommit,
   onProcessTerminated,
   writeLog,
   _cleanupFailedLaunchSetup,
   _resolveLaunchMode,
   _resolvePortConflictPolicy
 } from './launch'
-import * as assetsTapModule from '../../assetsTap'
 import {
   BETA_NOTICE_ANNOUNCED_ARGS_KEY,
   _resetForTest as _resetBetaNotice,
@@ -155,13 +151,11 @@ import {
 import * as settingsModule from '../../../settings'
 import type { ActionContext } from './types'
 import type * as ComfyDownloadManagerModule from '../../comfyDownloadManager'
-import type { createExecutionTap } from '../../executionTap'
 import type { createHardwareTap } from '../../hardwareTap'
 import type { LaunchProgressTracker } from '../../launchProgress'
 import type { ComfyArgsSchema } from '../../comfy-args'
 import { NO_CORE_COMMITS } from '../../coreBetaGrants'
 import type { CoreBetaGrant, CoreCommitState } from '../../coreBetaGrants'
-import * as telemetry from '../../telemetry'
 import {
   makeSendOutput,
   _getLaunchingInstallationIds,
@@ -188,25 +182,11 @@ type FakeChild = EventEmitter & {
 }
 
 describe('desktopFeatureFlags', () => {
-  it('always injects the unconditional desktop flags', () => {
-    const flags = desktopFeatureFlags(installOf('standalone'), false)
-    expect(flags.show_signin_button).toBe('true')
-    expect(flags.supports_terminal).toBe('false')
-  })
-
-  it('injects enable_telemetry only for standalone installs that opted in', () => {
-    expect(desktopFeatureFlags(installOf('standalone'), true).enable_telemetry).toBe('true')
-  })
-
-  it('omits enable_telemetry when telemetry is disabled (default off)', () => {
-    expect(desktopFeatureFlags(installOf('standalone'), false)).not.toHaveProperty(
-      'enable_telemetry'
-    )
-  })
-
-  it('omits enable_telemetry for non-standalone installs even when opted in', () => {
-    expect(desktopFeatureFlags(installOf('portable'), true)).not.toHaveProperty('enable_telemetry')
-    expect(desktopFeatureFlags(installOf('git'), true)).not.toHaveProperty('enable_telemetry')
+  it('injects only the unconditional desktop flags', () => {
+    expect(desktopFeatureFlags()).toEqual({
+      show_signin_button: 'true',
+      supports_terminal: 'false'
+    })
   })
 })
 
@@ -480,145 +460,49 @@ describe('handleLaunch model-download startup await (#1322)', () => {
   })
 })
 
-describe('createAssetsTapSafe', () => {
-  const BASE = {
-    installationId: 'assets-tap-base',
-    variant: 'nvidia',
-    release: '0.3.68',
-    coreBetaFlags: ['--enable-assets']
-  }
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('forwards the launch-gated core-beta flags with the base context', () => {
-    const create = vi.spyOn(assetsTapModule, 'createAssetsTap')
-    createAssetsTapSafe(BASE)
-    expect(create).toHaveBeenCalledWith({
-      installationId: 'assets-tap-base',
-      variant: 'nvidia',
-      release: '0.3.68',
-      coreBetaFlags: ['--enable-assets']
-    })
-  })
-
-  it('hands back the constructed tap when construction succeeds', () => {
-    const real = { ingest: vi.fn(), beginBoot: vi.fn(), flushSummary: vi.fn() }
-    vi.spyOn(assetsTapModule, 'createAssetsTap').mockReturnValue(real)
-    expect(createAssetsTapSafe(BASE)).toBe(real)
-  })
-
-  it('substitutes an inert tap when construction throws, letting no exception escape', () => {
-    vi.spyOn(assetsTapModule, 'createAssetsTap').mockImplementation(() => {
-      throw new Error('assets tap construction exploded')
-    })
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-
-    let tap: ReturnType<typeof createAssetsTapSafe> | null = null
-    expect(() => {
-      tap = createAssetsTapSafe(BASE)
-    }).not.toThrow()
-    expect(consoleError).toHaveBeenCalled()
-
-    // Every lifecycle call the launch path makes must be a safe no-op on the
-    // substitute, or containment at construction buys nothing.
-    const inert = tap as unknown as ReturnType<typeof createAssetsTapSafe>
-    expect(() => {
-      inert.beginBoot()
-      inert.ingest('[assets-event] assets.enabled hashing_enabled=true\n', 'stdout')
-      inert.ingest(
-        '[assets-event] scanner.stat_failed error_type=OSError site=discovery\n',
-        'stderr'
-      )
-      inert.flushSummary()
-    }).not.toThrow()
-  })
-})
-
-describe('attachLaunchStreams assets tap wiring', () => {
-  function fakeTap() {
-    return { ingest: vi.fn(), beginBoot: vi.fn(), flushSummary: vi.fn() }
-  }
-
-  function harness(assetsTap = fakeTap()) {
+describe('attachLaunchStreams', () => {
+  function harness() {
     const stdout = new EventEmitter()
     const stderr = new EventEmitter()
     const proc = { stdout, stderr } as unknown as ChildProcess
     const logStream = { writableEnded: false, write: vi.fn() } as unknown as WriteStream
-    const execTap = fakeTap()
-    const hwTap = fakeTap()
-    const tracker = { ingest: vi.fn() } as unknown as LaunchProgressTracker
+    const hwTap = { ingest: vi.fn(), beginBoot: vi.fn(), getAcceleratorInfo: vi.fn() }
+    const tracker = { ingest: vi.fn() }
     const sendOutput = vi.fn()
 
     const { getStderr } = attachLaunchStreams(
       proc,
       logStream,
       sendOutput,
-      execTap as unknown as ReturnType<typeof createExecutionTap>,
       hwTap as unknown as ReturnType<typeof createHardwareTap>,
-      assetsTap,
-      tracker
+      tracker as unknown as LaunchProgressTracker
     )
-    return { stdout, stderr, execTap, hwTap, assetsTap, getStderr }
+    return { stdout, stderr, logStream, hwTap, tracker, sendOutput, getStderr }
   }
 
-  it('feeds stdout chunks to the assets tap tagged as stdout', () => {
-    const h = harness()
-    h.stdout.emit('data', Buffer.from('[assets-event] assets.enabled hashing_enabled=true\n'))
-    expect(h.assetsTap.ingest).toHaveBeenCalledWith(
-      '[assets-event] assets.enabled hashing_enabled=true\n',
-      'stdout'
-    )
-  })
-
-  it('feeds stderr chunks to the assets tap tagged as stderr', () => {
-    const h = harness()
-    h.stderr.emit(
-      'data',
-      Buffer.from('[assets-event] scanner.stat_failed error_type=OSError site=discovery\n')
-    )
-    expect(h.assetsTap.ingest).toHaveBeenCalledWith(
-      '[assets-event] scanner.stat_failed error_type=OSError site=discovery\n',
-      'stderr'
-    )
-  })
-
-  it('leaves the hardware and execution taps receiving both streams unchanged', () => {
+  it('feeds both streams to the hardware tap, the tracker, the console and the log', () => {
     const h = harness()
     h.stdout.emit('data', Buffer.from('out\n'))
     h.stderr.emit('data', Buffer.from('err\n'))
-    for (const tap of [h.execTap, h.hwTap]) {
-      expect(tap.ingest).toHaveBeenCalledWith('out\n', 'stdout')
-      expect(tap.ingest).toHaveBeenCalledWith('err\n', 'stderr')
-    }
+
+    expect(h.hwTap.ingest).toHaveBeenCalledWith('out\n', 'stdout')
+    expect(h.hwTap.ingest).toHaveBeenCalledWith('err\n', 'stderr')
+    expect(h.tracker.ingest).toHaveBeenCalledWith('out\n')
+    expect(h.tracker.ingest).toHaveBeenCalledWith('err\n')
+    expect(h.sendOutput).toHaveBeenCalledWith('out\n')
+    expect(h.sendOutput).toHaveBeenCalledWith('err\n')
+    expect(h.logStream.write).toHaveBeenCalledTimes(2)
     expect(h.getStderr()).toBe('err\n')
   })
 
-  it('keeps piping both streams when the inert substitute tap is attached', () => {
-    vi.spyOn(assetsTapModule, 'createAssetsTap').mockImplementation(() => {
-      throw new Error('assets tap construction exploded')
-    })
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
-    try {
-      const inert = createAssetsTapSafe({
-        installationId: 'inert',
-        variant: null,
-        release: null,
-        coreBetaFlags: []
-      })
-      const h = harness(inert as unknown as ReturnType<typeof fakeTap>)
-      expect(() => {
-        h.stdout.emit('data', Buffer.from('out\n'))
-        h.stderr.emit('data', Buffer.from('err\n'))
-      }).not.toThrow()
-      expect(h.execTap.ingest).toHaveBeenCalledWith('out\n', 'stdout')
-      expect(h.hwTap.ingest).toHaveBeenCalledWith('err\n', 'stderr')
-      expect(h.getStderr()).toBe('err\n')
-    } finally {
-      consoleError.mockRestore()
-      vi.restoreAllMocks()
-    }
+  it('keeps only an ANSI-stripped 16 KiB tail of stderr', () => {
+    const h = harness()
+    h.stderr.emit('data', Buffer.from('\x1b[31mred\x1b[0m\n'))
+    expect(h.getStderr()).toBe('red\n')
+
+    h.stderr.emit('data', Buffer.from('x'.repeat(20 * 1024)))
+    expect(h.getStderr()).toHaveLength(16 * 1024)
+    expect(h.getStderr().endsWith('x')).toBe(true)
   })
 })
 
@@ -665,10 +549,6 @@ const build = (over: {
   })
 
 describe('buildLaunchArgs core beta injection', () => {
-  afterEach(() => {
-    telemetry.setConsentState('undecided')
-  })
-
   it('places the granted beta arg after the desktop flags and before the user args', () => {
     const built = build({
       userArgs: ['--listen'],
@@ -718,7 +598,7 @@ describe('buildLaunchArgs core beta injection', () => {
     expect(built.beta.logRecords).toEqual([
       '[core-beta] --enable-assets withheld: entry 1: no ancestry-proven release (base 0.3.81)\n'
     ])
-    // Refusing the version claim is not the core refusing the arg; telemetry must not conflate them.
+    // Refusing the version claim is not the core refusing the arg.
     expect(built.beta.droppedUnsupported).toEqual([])
   })
 
@@ -908,18 +788,7 @@ describe('buildLaunchArgs core beta injection', () => {
     ['opted in', true],
     ['opted out', false]
   ])('carries the resolved beta toggle on the DTO when %s', (_label, betaEnabled) => {
-    // The DTO is the only carrier of `opt_state`: the report site no longer re-reads settings,
-    // so a launch that never reaches arg assembly still reports the real toggle.
     expect(build({ schema: schemaOf('enable-assets'), betaEnabled }).beta.optedIn).toBe(betaEnabled)
-  })
-
-  it('keeps injecting for a user who declined telemetry but opted into beta features', () => {
-    // Consent is not an input here at all — the gate is the beta toggle alone.
-    telemetry.setConsentState('denied')
-    const built = build({ schema: schemaOf('enable-assets') })
-
-    expect(built.args).toContain('--enable-assets')
-    expect(built.beta.logRecords).toHaveLength(1)
   })
 })
 
@@ -997,7 +866,6 @@ describe('core beta report placement', () => {
   const HARNESS_GRANT = { arg: '--enable-assets', minCoreVersion: '0.3.80' }
   let installDir = ''
   let sent: string[] = []
-  let events: { event: string; properties?: Record<string, unknown> }[] = []
   let spawnArgs: string[] = []
 
   const harnessInstall = (): InstallationRecord =>
@@ -1033,7 +901,6 @@ describe('core beta report placement', () => {
     installDir = fs.mkdtempSync(path.join(os.tmpdir(), 'core-beta-launch-'))
     fs.mkdirSync(path.join(installDir, 'ComfyUI'), { recursive: true })
     sent = []
-    events = []
     launchHarness.schemaThrows = false
     launchHarness.registryThrows = false
     launchHarness.registryCalls = 0
@@ -1061,26 +928,12 @@ describe('core beta report placement', () => {
       cwd: installDir,
       skipPortWait: true
     }
-    vi.spyOn(telemetry, 'emit').mockImplementation(((
-      event: string,
-      properties?: Record<string, unknown>
-    ) => {
-      events.push({ event, properties })
-    }) as unknown as typeof telemetry.emit)
-    vi.spyOn(telemetry, 'capture').mockImplementation(((
-      event: string,
-      properties?: Record<string, unknown>
-    ) => {
-      events.push({ event, properties })
-    }) as unknown as typeof telemetry.capture)
   })
 
   afterEach(() => {
     vi.restoreAllMocks()
     fs.rmSync(installDir, { recursive: true, force: true })
   })
-
-  const reportedEvents = (): string[] => events.map((e) => e.event)
 
   /** Minimal live child: streams to attach to, a pid to kill, and no exit unless a test
    *  emits one, so a launch that reaches spawn settles instead of hanging. */
@@ -1094,13 +947,11 @@ describe('core beta report placement', () => {
     return proc
   }
 
-  it('reports on a launch that reaches the skip-port spawn', async () => {
+  it('writes the core-beta record on a launch that reaches the skip-port spawn', async () => {
     const res = await handleLaunch(ctxFor('harness-skip-port-spawns'))
 
     expect(res.ok).toBe(true)
     expect(sent.join('')).toContain('[core-beta] --enable-assets')
-    expect(reportedEvents()).toContain('comfy.desktop.core_beta.applied')
-    expect(reportedEvents()).toContain('comfy.desktop.core_beta.opt_state')
   })
 
   function gitInitComfyUI(): string {
@@ -1135,26 +986,6 @@ describe('core beta report placement', () => {
     )
   })
 
-  it('attributes the beta and boot events to the live HEAD, not the recorded commit', async () => {
-    const head = gitInitComfyUI()
-    launchHarness.grants = [{ arg: '--enable-assets', commitRanges: [[head, null]] }]
-    launchHarness.launchCommand = {
-      cmd: process.execPath,
-      args: ['-s', path.join(installDir, 'ComfyUI', 'main.py'), '--listen'],
-      cwd: installDir,
-      skipPortWait: false,
-      port: 48233
-    }
-    launchHarness.waitForPort = async () => {}
-
-    await handleLaunch(ctxFor('harness-commit-attribution'))
-
-    const applied = events.find((e) => e.event === 'comfy.desktop.core_beta.applied')
-    expect(applied?.properties).toMatchObject({ core_commit: head, core_version_label: 'v0.3.81' })
-    const boot = events.find((e) => e.event === 'comfy.desktop.comfyui.boot_started')
-    expect(boot?.properties).toMatchObject({ core_commit: head, core_version_label: 'v0.3.81' })
-  })
-
   it('launches a legacy record whose version carries no commit', async () => {
     const ctx = ctxFor('harness-legacy-record')
     ctx.inst = {
@@ -1166,15 +997,6 @@ describe('core beta report placement', () => {
 
     expect(res.ok).toBe(true)
     expect(spawnArgs.length).toBeGreaterThan(0)
-  })
-
-  it("attributes a not-git install's events to its recorded commit", async () => {
-    await handleLaunch(ctxFor('harness-record-attribution'))
-
-    const applied = events.find((e) => e.event === 'comfy.desktop.core_beta.applied')
-    expect(applied?.properties).toMatchObject({
-      core_commit: '61e5e3b5a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4'
-    })
   })
 
   it('reports a commit-bound grant withheld because HEAD is past its upper bound', async () => {
@@ -1481,20 +1303,6 @@ describe('core beta report placement', () => {
 
     expect(res.ok).toBe(true)
     expect(spawnArgs).toContain('--enable-assets')
-    expect(reportedEvents()).toContain('comfy.desktop.core_beta.applied')
-    expect(reportedEvents()).toContain('comfy.desktop.core_beta.opt_state')
-  })
-
-  it('continues a skip-port launch when beta telemetry reporting throws', async () => {
-    vi.mocked(telemetry.emit).mockImplementation((event) => {
-      if (event === 'comfy.desktop.core_beta.applied') throw new Error('sink unavailable')
-    })
-
-    const res = await handleLaunch(ctxFor('harness-skip-port-telemetry-throws'))
-
-    expect(res.ok).toBe(true)
-    expect(spawnArgs).toContain('--enable-assets')
-    expect(sent.join('')).toContain('[core-beta] --enable-assets')
   })
 
   it.each([
@@ -1508,7 +1316,7 @@ describe('core beta report placement', () => {
     ['revoked grant', true, [], []],
     ['beta opt-out', false, [HARNESS_GRANT], []],
     ['outside version window', true, [{ ...HARNESS_GRANT, minCoreVersion: '0.3.82' }], []]
-  ])('attributes assets events to %s', async (_name, optedIn, grants, expected) => {
+  ])('injects the expected grant args for %s', async (_name, optedIn, grants, expected) => {
     launchHarness.betaEnabled = optedIn
     launchHarness.grants = grants
     launchHarness.launchCommand!.args = [
@@ -1524,22 +1332,12 @@ describe('core beta report placement', () => {
 
     const res = await handleLaunch(ctxFor(`harness-assets-context-${_name}`))
     expect(res.ok).toBe(true)
-    child.stdout.emit('data', Buffer.from('[assets-event] assets.enabled hashing_enabled=false\n'))
-
-    const assetsEvents = events.filter(
-      (e) => e.event === 'comfy.desktop.comfyui.assets.assets.enabled'
-    )
-    expect(assetsEvents).toHaveLength(1)
-    expect(assetsEvents[0]!.properties).toMatchObject({ core_beta_flags: expected })
     expect(
       spawnArgs.filter((arg) => arg === '--enable-assets' || arg === '--enable-asset-hashing')
     ).toEqual(expected)
   })
 
-  // Assets can now run without a grant having been applied, so attribution must report what
-  // the grant system applied rather than what is on the command line — otherwise a self-enrolled user
-  // lands inside the cohort and skews the soak denominator.
-  it("reports no beta flags when assets run from the user's own argument", async () => {
+  it("keeps the user's own --enable-assets when no grant applies", async () => {
     launchHarness.betaEnabled = false
     launchHarness.grants = []
     launchHarness.launchCommand!.args = [
@@ -1556,15 +1354,7 @@ describe('core beta report placement', () => {
 
     const res = await handleLaunch(ctxFor('harness-assets-context-user-owned'))
     expect(res.ok).toBe(true)
-    child.stdout.emit('data', Buffer.from('[assets-event] assets.enabled hashing_enabled=false\n'))
-
     expect(spawnArgs).toContain('--enable-assets')
-
-    const assetsEvents = events.filter(
-      (e) => e.event === 'comfy.desktop.comfyui.assets.assets.enabled'
-    )
-    expect(assetsEvents).toHaveLength(1)
-    expect(assetsEvents[0]!.properties).toMatchObject({ core_beta_flags: [] })
   })
 
   it.each([
@@ -1624,7 +1414,6 @@ describe('core beta report placement', () => {
         '--enable-asset-hashing',
         '--cpu'
       ])
-      expect(reportedEvents()).not.toContain('comfy.desktop.core_beta.applied')
     }
   )
 
@@ -1639,8 +1428,6 @@ describe('core beta report placement', () => {
 
     expect(res).toMatchObject({ ok: false, cancelled: true })
     expect(sent.join('')).not.toContain('[core-beta]')
-    expect(reportedEvents()).not.toContain('comfy.desktop.core_beta.applied')
-    expect(reportedEvents()).not.toContain('comfy.desktop.core_beta.opt_state')
   })
 
   it('does not report when cancelled at the normal-path pre-spawn gate', async () => {
@@ -1661,11 +1448,9 @@ describe('core beta report placement', () => {
 
     expect(res).toMatchObject({ ok: false, cancelled: true })
     expect(sent.join('')).not.toContain('[core-beta]')
-    expect(reportedEvents()).not.toContain('comfy.desktop.core_beta.applied')
-    expect(reportedEvents()).not.toContain('comfy.desktop.core_beta.opt_state')
   })
 
-  it('reports once and drains both assets tails before a port-conflict retry without resetting caps', async () => {
+  it('writes the core-beta record once across a port-conflict retry', async () => {
     // The only test that proves the latch: the report site lives INSIDE the recursing
     // `tryLaunch`, so an unlatched report fires once per attempt.
     const children: FakeChild[] = []
@@ -1678,14 +1463,6 @@ describe('core beta report placement', () => {
       port: 48232
     }
     launchHarness.spawn = () => {
-      if (children.length === 1) {
-        expect(
-          events.filter((e) => e.event === 'comfy.desktop.comfyui.assets.assets.enabled')
-        ).toHaveLength(1)
-        expect(
-          events.filter((e) => e.event === 'comfy.desktop.comfyui.assets.scanner.stat_failed')
-        ).toHaveLength(1)
-      }
       const child = fakeChild()
       children.push(child)
       return child
@@ -1697,15 +1474,6 @@ describe('core beta report placement', () => {
       // from here is deterministic — no racing the stream/exit handler registration.
       const first = children[0]!
       first.stderr.emit('data', Buffer.from('OSError: [Errno 98] Address already in use\n'))
-      first.stdout.emit(
-        'data',
-        Buffer.from('[assets-event] seeder.scan_started root=models\n'.repeat(60))
-      )
-      first.stdout.emit('data', Buffer.from('[assets-event] assets.enabled hashing_enabled=true'))
-      first.stderr.emit(
-        'data',
-        Buffer.from('[assets-event] scanner.stat_failed error_type=OSError site=discovery')
-      )
       first.emit('close', 1, null)
       return new Promise<void>(() => {})
     }
@@ -1715,30 +1483,7 @@ describe('core beta report placement', () => {
     expect(res.ok).toBe(true)
     expect(attempt).toBe(2)
     expect(children).toHaveLength(2)
-    expect(events.filter((e) => e.event === 'comfy.desktop.core_beta.opt_state')).toHaveLength(1)
     expect(sent.join('').match(/\[core-beta\]/g) ?? []).toHaveLength(1)
-    children[1]!.stdout.emit(
-      'data',
-      Buffer.from('[assets-event] seeder.scan_started root=models\n')
-    )
-    expect(
-      events.filter((e) => e.event === 'comfy.desktop.comfyui.assets.seeder.scan_started')
-    ).toHaveLength(60)
-    const bootEvents = events.filter((e) => e.event.startsWith('comfy.desktop.comfyui.boot_'))
-    expect(bootEvents.map((e) => e.event)).toEqual([
-      'comfy.desktop.comfyui.boot_started',
-      'comfy.desktop.comfyui.boot_started',
-      'comfy.desktop.comfyui.boot_completed'
-    ])
-    expect(bootEvents.every((e) => e.properties?.assets_enabled === true)).toBe(true)
-    expect(bootEvents.map((e) => e.properties?.core_beta_flags)).toEqual([
-      ['--enable-assets'],
-      ['--enable-assets'],
-      ['--enable-assets']
-    ])
-    for (const { properties } of bootEvents) {
-      expect(properties).toMatchObject({ core_beta_opted_in: true, core_version: '0.3.81' })
-    }
   })
 
   it.each([
@@ -1750,7 +1495,7 @@ describe('core beta report placement', () => {
     ['schema removes an unsupported manual flag', false, true, false, false, false],
     ['opted in without a grant', true, false, false, true, false]
   ] as const)(
-    'tags boot arguments independently of grants: %s',
+    'decides --enable-assets independently of grants: %s',
     async (_description, optedIn, manualFlag, discoveryFails, supported, expected) => {
       launchHarness.betaEnabled = optedIn
       launchHarness.grants = []
@@ -1774,53 +1519,8 @@ describe('core beta report placement', () => {
 
       expect(res.ok).toBe(true)
       expect(spawnArgs.includes('--enable-assets')).toBe(expected)
-      const bootEvents = events.filter((e) => e.event.startsWith('comfy.desktop.comfyui.boot_'))
-      expect(bootEvents.map((e) => e.event)).toEqual([
-        'comfy.desktop.comfyui.boot_started',
-        'comfy.desktop.comfyui.boot_completed'
-      ])
-      for (const { properties } of bootEvents) {
-        expect(properties).toMatchObject({
-          assets_enabled: expected,
-          core_beta_flags: [],
-          core_beta_opted_in: optedIn,
-          core_version: '0.3.81'
-        })
-      }
     }
   )
-
-  it('keeps the applied Assets cohort on terminal boot failure', async () => {
-    launchHarness.launchCommand = {
-      cmd: process.execPath,
-      args: ['-s', path.join(installDir, 'ComfyUI', 'main.py'), '--listen'],
-      cwd: installDir,
-      skipPortWait: false,
-      port: 48234
-    }
-    launchHarness.waitForPort = async () => {
-      throw new Error('boot timed out')
-    }
-
-    const res = await handleLaunch(ctxFor('harness-assets-failed'))
-
-    expect(res.ok).toBe(false)
-    const bootEvents = events.filter((e) =>
-      ['comfy.desktop.comfyui.boot_started', 'comfy.desktop.comfyui.boot_failed'].includes(e.event)
-    )
-    expect(bootEvents.map((e) => e.event)).toEqual([
-      'comfy.desktop.comfyui.boot_started',
-      'comfy.desktop.comfyui.boot_failed'
-    ])
-    expect(bootEvents.every((e) => e.properties?.assets_enabled === true)).toBe(true)
-    expect(bootEvents.map((e) => e.properties?.core_beta_flags)).toEqual([
-      ['--enable-assets'],
-      ['--enable-assets']
-    ])
-    for (const { properties } of bootEvents) {
-      expect(properties).toMatchObject({ core_beta_opted_in: true, core_version: '0.3.81' })
-    }
-  })
 
   it('still filters user args, injecting nothing, when the beta setting cannot be resolved', async () => {
     // Resolving the toggle writes the default back on first read, so a read-only profile makes
@@ -1847,150 +1547,5 @@ describe('core beta report placement', () => {
     expect(spawnArgs).not.toContain('--not-a-real-comfy-flag')
     // Fail closed: the grant is schema-supported and would have been injected at `true`.
     expect(spawnArgs).not.toContain('--enable-assets')
-  })
-
-  it('reports opt_state true when schema discovery is unavailable', async () => {
-    // Arg assembly never runs, so there are no grants — but the user IS opted in, and the
-    // report site no longer re-reads settings to find that out.
-    launchHarness.schemaThrows = true
-    launchHarness.betaEnabled = true
-
-    const res = await handleLaunch(ctxFor('harness-schema-unavailable'))
-
-    expect(res.ok).toBe(true)
-    const optState = events.find((e) => e.event === 'comfy.desktop.core_beta.opt_state')
-    expect(optState?.properties).toMatchObject({ opted_in: true })
-    expect(reportedEvents()).not.toContain('comfy.desktop.core_beta.applied')
-  })
-})
-
-describe('emitCoreBetaTelemetry', () => {
-  const COMMIT = '61e5e3b5a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4'
-  let captured: Array<{ event: string; ctx: Record<string, unknown> }>
-
-  beforeEach(() => {
-    captured = []
-    vi.spyOn(telemetry, 'emit').mockImplementation((event, ctx) => {
-      captured.push({ event, ctx: ctx as Record<string, unknown> })
-    })
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-    telemetry.setConsentState('undecided')
-  })
-
-  it('reports the applied grants with the core version they matched', () => {
-    emitCoreBetaTelemetry({
-      appliedArgs: ['--enable-assets'],
-      droppedUnsupported: [],
-      coreVersion: '0.3.81',
-      coreCommit: COMMIT,
-      coreVersionLabel: 'v0.3.81+15',
-      optedIn: true
-    })
-
-    const applied = captured.find((c) => c.event === 'comfy.desktop.core_beta.applied')
-    expect(applied!.ctx).toEqual({
-      args: ['--enable-assets'],
-      core_version: '0.3.81',
-      core_commit: COMMIT,
-      core_version_label: 'v0.3.81+15',
-      dropped_unsupported: []
-    })
-  })
-
-  it('reports a grant the core rejected even though nothing was applied', () => {
-    emitCoreBetaTelemetry({
-      appliedArgs: [],
-      droppedUnsupported: ['--enable-assets'],
-      coreVersion: '0.3.81',
-      coreCommit: COMMIT,
-      coreVersionLabel: 'v0.3.81+15',
-      optedIn: true
-    })
-
-    const applied = captured.find((c) => c.event === 'comfy.desktop.core_beta.applied')
-    expect(applied!.ctx).toMatchObject({ args: [], dropped_unsupported: ['--enable-assets'] })
-  })
-
-  it('emits the opt state on a grantless launch and no applied event', () => {
-    emitCoreBetaTelemetry({
-      appliedArgs: [],
-      droppedUnsupported: [],
-      coreVersion: null,
-      coreCommit: null,
-      coreVersionLabel: null,
-      optedIn: false
-    })
-
-    expect(captured.map((c) => c.event)).toEqual(['comfy.desktop.core_beta.opt_state'])
-    expect(captured[0]!.ctx).toEqual({ opted_in: false })
-  })
-
-  it('emits the opt state once per launch alongside an applied event', () => {
-    emitCoreBetaTelemetry({
-      appliedArgs: ['--enable-assets'],
-      droppedUnsupported: [],
-      coreVersion: '0.3.81',
-      coreCommit: COMMIT,
-      coreVersionLabel: 'v0.3.81+15',
-      optedIn: true
-    })
-
-    expect(captured.map((c) => c.event)).toEqual([
-      'comfy.desktop.core_beta.applied',
-      'comfy.desktop.core_beta.opt_state'
-    ])
-  })
-
-  it('hands both events to the consent-gated emit path without consulting consent itself', () => {
-    // Delivery for a telemetry-declining user is suppressed by telemetry.ts's
-    // own gate — never by a branch here, which would also silence opted-in users.
-    telemetry.setConsentState('denied')
-
-    emitCoreBetaTelemetry({
-      appliedArgs: ['--enable-assets'],
-      droppedUnsupported: [],
-      coreVersion: '0.3.81',
-      coreCommit: COMMIT,
-      coreVersionLabel: 'v0.3.81+15',
-      optedIn: true
-    })
-
-    expect(captured.map((c) => c.event)).toEqual([
-      'comfy.desktop.core_beta.applied',
-      'comfy.desktop.core_beta.opt_state'
-    ])
-  })
-})
-
-describe('launchedCoreCommit', () => {
-  const RECORDED = '61E5E3B5A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4'
-  const LIVE = 'AB'.repeat(20)
-  const inst = { comfyVersion: { commit: RECORDED } } as unknown as InstallationRecord
-
-  it('names the live HEAD over the record', () => {
-    expect(launchedCoreCommit(inst, { kind: 'head', commit: LIVE })).toBe(LIVE.toLowerCase())
-  })
-
-  it("falls back to the record's commit on a not-git install", () => {
-    expect(launchedCoreCommit(inst, { kind: 'not-git' })).toBe(RECORDED.toLowerCase())
-    expect(launchedCoreCommit({} as InstallationRecord, { kind: 'not-git' })).toBeNull()
-  })
-
-  it.each([
-    ['a short ref', 'abc123'],
-    ['a symbolic ref', 'ref: refs/heads/master'],
-    ['oversized garbage', 'f'.repeat(4096)]
-  ])('names nothing for a HEAD holding %s rather than a full SHA', (_label, commit) => {
-    expect(launchedCoreCommit(inst, { kind: 'head', commit })).toBeNull()
-  })
-
-  it('names nothing for a git checkout whose HEAD would not read', () => {
-    expect(
-      launchedCoreCommit(inst, { kind: 'unreadable' }),
-      'the record may be what went stale'
-    ).toBeNull()
   })
 })

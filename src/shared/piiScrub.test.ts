@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { normalizeExceptionContext, scrubAll, scrubPII, scrubSecrets } from './piiScrub'
+import { scrubAll, scrubPII, scrubSecrets } from './piiScrub'
 
 describe('piiScrub', () => {
   describe('scrubPII', () => {
@@ -89,30 +89,6 @@ describe('piiScrub', () => {
       expect(scrubAll('plain telemetry payload with no secrets')).toBe(
         'plain telemetry payload with no secrets'
       )
-    })
-  })
-
-  describe('normalizeExceptionContext', () => {
-    it('scrubs before truncating and removes nested values', () => {
-      const normalized = normalizeExceptionContext(
-        {
-          secret: 'token="correct horse battery staple" trailing',
-          nested: { password: 'still secret' },
-          values: ['alice@example.com', { secret: 'nope' }, 2]
-        },
-        { maxStringLength: 20 }
-      )
-      expect(normalized.secret).toBe('token=[REDACTED] tra')
-      expect(normalized).not.toHaveProperty('nested')
-      expect(normalized.values).toEqual(['[REDACTED]', 2])
-    })
-
-    it('caps keys and array items', () => {
-      const normalized = normalizeExceptionContext(
-        { first: [1, 2, 3], second: 'dropped' },
-        { maxKeys: 1, maxArrayItems: 2 }
-      )
-      expect(normalized).toEqual({ first: [1, 2] })
     })
   })
 })

@@ -1,6 +1,6 @@
 /**
- * Cloud user-tier cache. Holds the signed-in customer's subscription tier for billing
- * telemetry and free-tier offer UI.
+ * Cloud user-tier cache. Holds the signed-in customer's subscription tier for the
+ * free-tier offer UI.
  *
  * Sourced from comfy-api `GET /customers/me` (via the cloud webContents' Firebase token) and
  * persisted to `userData/cloud-user-tier.json` so the next launch's first render sees it.
@@ -9,7 +9,6 @@
 import { app, type WebContents } from 'electron'
 import * as fs from 'fs/promises'
 import * as path from 'path'
-import * as telemetry from './telemetry'
 import type { CloudUserTier } from '../../types/ipc'
 
 /** Subscription tier names that map to `paid`; anything else (FREE, missing, malformed) maps to `free`. */
@@ -79,18 +78,7 @@ async function setTier(rawTierName: string | null | undefined): Promise<void> {
       ? 'paid'
       : 'free'
   if (next === cached) return
-  const previous = cached
   cached = next
-  // Emit only on a real transition between two known tiers. The first
-  // resolution out of `unknown` is hydration, not a change, so it is not a
-  // conversion signal. A `free → paid` flip shortly after
-  // `billing.checkout_returned` is the desktop-visible conversion.
-  if (previous === 'free' || previous === 'paid') {
-    telemetry.capture('comfy.desktop.billing.tier_changed', {
-      from_tier: previous,
-      to_tier: next
-    })
-  }
   try {
     await fs.writeFile(getPersistPath(), JSON.stringify({ tier: next, ts: Date.now() }), 'utf-8')
   } catch (err) {

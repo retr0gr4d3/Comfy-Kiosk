@@ -1673,7 +1673,7 @@ describe('TitleBarApp', () => {
       wrapper.unmount()
     })
 
-    it('names the feature when the PostHog payload supplied a name', async () => {
+    it('names the feature when the ops-flag payload supplied a name', async () => {
       installApiMock({
         pending: { args: ['--enable-assets'], direction: 'enabled', description: 'Asset library' }
       })

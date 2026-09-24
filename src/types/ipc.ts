@@ -173,14 +173,6 @@ export interface RunningInstance {
   url?: string
   mode: string
   startedAt?: number
-  /** Boot duration (ms from launch start to server-ready). Present on the
-   *  `instance-started` broadcast; absent from `getRunningInstances()`. */
-  bootTimeMs?: number
-  /** Spawn-retry counts for this boot, folded onto `instance-started` so the
-   *  renderer's telemetry carries them without a separate `server_ready`
-   *  event. 0 on the remote / skip-port paths. */
-  portRetries?: number
-  rebootRetries?: number
 }
 
 // --- Source / New Install types ---
@@ -308,8 +300,8 @@ export interface DetailField {
   rowGroup?: string
   tooltip?: string
   /** Blocks only the off -> on transition of a boolean row; turning it back
-   *  off stays available. Derived renderer-side from live state (the beta
-   *  opt-in reads telemetry consent), never copied out of a `SettingsField` —
+   *  off stays available. Derived renderer-side from live state, never copied
+   *  out of a `SettingsField` —
    *  `toDetailField` has no business knowing about it. */
   turnOnDisabled?: boolean
   /** i18n key for the hover text explaining why turning this row on is
@@ -701,11 +693,6 @@ export interface ComfyExitedData {
   crashedAtMs?: number
 }
 
-export interface ComfyBootLogData {
-  installationId: string
-  bootStderr: string
-}
-
 export interface GPUInfo {
   id?: string
   label: string
@@ -934,150 +921,6 @@ export interface PerformanceTestBenchmark {
   hardwareName: string | null
   /** Complete results.json payload used to discover configurable table columns. */
   result: Record<string, PerformanceTestResultValue>
-}
-
-export interface SnapshotDiffEntry {
-  createdAt: string
-  trigger: string
-  label: string | null
-  nodesAdded: Array<{
-    id: string
-    type: string
-    dirName: string
-    enabled: boolean
-    version?: string
-    commit?: string
-  }>
-  nodesRemoved: Array<{
-    id: string
-    type: string
-    dirName: string
-    enabled: boolean
-    version?: string
-    commit?: string
-  }>
-  nodesChanged: Array<{
-    id: string
-    from: { version?: string; commit?: string; enabled: boolean }
-    to: { version?: string; commit?: string; enabled: boolean }
-  }>
-  pipsAdded: Array<{ name: string; version: string }>
-  pipsRemoved: Array<{ name: string; version: string }>
-  pipsChanged: Array<{ name: string; from: string; to: string }>
-  comfyuiChanged: boolean
-  comfyui?: {
-    from: { ref: string; commit: string | null }
-    to: { ref: string; commit: string | null }
-  }
-  updateChannelChanged: boolean
-  updateChannel?: { from: string; to: string }
-}
-
-export interface InstallationDdContext {
-  installation_id: string
-  variant: string
-  source_id: string
-  update_channel: string
-  comfyui_version: string
-  copied_from?: string
-  copy_reason?: string
-  snapshot_count: number
-  disk_free_gb: number | null
-  disk_total_gb: number | null
-  latest_snapshot: {
-    createdAt: string
-    trigger: string
-    label: string | null
-    comfyui: {
-      ref: string
-      commit: string | null
-      releaseTag: string
-      variant: string
-    }
-    customNodes: Array<{
-      id: string
-      type: string
-      dirName: string
-      enabled: boolean
-      version?: string
-      commit?: string
-    }>
-    pipPackages: Record<string, string>
-    pythonVersion?: string
-    updateChannel?: string
-  } | null
-  snapshot_diffs: SnapshotDiffEntry[]
-}
-
-/** Compact per-install summary for the per-session boot census
- *  emitted as `comfy.desktop.session.installs_inventory`. Strictly metadata
- *  + counts + diff summaries (no per-node / per-package contents) so
- *  the inventory can pack many installs into a single PostHog event. */
-export interface InstallInventoryEntry {
-  installation_id: string
-  source_id: string
-  variant: string
-  update_channel: string
-  comfyui_version: string
-  snapshot_count: number
-  last_launched_at: number | null
-  latest_snapshot: {
-    createdAt: string
-    trigger: string
-    /** Presence flag only — user-typed labels can carry PII / paths /
-     *  model names. The inventory event bypasses the renderer-side
-     *  `scrubAll` pass, so we never ship the raw label string. */
-    has_label: boolean
-    comfyui: { ref: string; commit: string | null; releaseTag: string }
-    custom_nodes_count: number
-    pip_packages_count: number
-  } | null
-  snapshot_diffs: Array<{
-    createdAt: string
-    trigger: string
-    /** Same PII reasoning as `latest_snapshot.has_label`. */
-    has_label: boolean
-    nodesAdded: number
-    nodesRemoved: number
-    nodesChanged: number
-    pipsAdded: number
-    pipsRemoved: number
-    pipsChanged: number
-    comfyuiChanged: boolean
-    updateChannelChanged: boolean
-  }>
-}
-
-export interface InstallsInventory {
-  /** Total visible (non-`installing`) installs on disk, regardless of
-   *  whether they fit in the inventory payload. */
-  total_install_count: number
-  /** Number of installs actually packed into `installs[]` after
-   *  per-install + total byte caps were applied. */
-  included_install_count: number
-  /** True when the total byte cap was hit and one or more
-   *  least-recently-launched installs were dropped from the tail
-   *  (installs are sorted most-recent first, so truncation always
-   *  costs the oldest entries). */
-  truncated: boolean
-  /** Installs sorted most-recently-launched first; never-launched at
-   *  the end. */
-  installs: InstallInventoryEntry[]
-}
-
-export interface DatadogForwardedError {
-  source: string
-  message: string
-  stack?: string
-  level?: 'debug' | 'info' | 'warn' | 'error' | 'critical'
-  context?: Record<string, unknown>
-  /**
-   * Set when main has already handled the PostHog side of this error (which
-   * since `POSTHOG_EXCEPTIONS` became opt-in may mean it deliberately sent
-   * nothing). Either way the renderer's listener forwards to Datadog only,
-   * so it never double-reports.
-   */
-  skipPostHog?: boolean
 }
 
 // --- Snapshot tab types ---
@@ -1315,10 +1158,7 @@ export interface ElectronApi {
 
   // Installations
   getInstallations(): Promise<Installation[]>
-  /** Coarse cohort summary of persisted installs for telemetry global
-   *  context. Counters / booleans only — no IDs, paths, or names — so
-   *  the payload is safe to register as PostHog / Datadog cohort
-   *  properties on every event.
+  /** Coarse summary of persisted installs. Counters / booleans only.
    *
    *  `localCount` excludes the always-seeded Comfy Cloud entry; that
    *  entry is re-seeded on every boot, so counting it would just shift
@@ -1334,10 +1174,7 @@ export interface ElectronApi {
   reorderInstallations(orderedIds: string[]): Promise<void>
   probeInstallation(dirPath: string): Promise<ProbeResult[]>
   trackInstallation(data: Record<string, unknown>): Promise<TrackResult>
-  /** `express` flags the one-click express-install path (vs the manual
-   *  Configure wizard). Used only to label the `install.completed`
-   *  telemetry event's `method`; defaults to false. */
-  installInstance(installationId: string, express?: boolean): Promise<void>
+  installInstance(installationId: string): Promise<void>
   /** Skip waiting on the starter-template model download — hands the still-
    *  running task off to the title-bar downloads tray (no restart). */
   skipTemplateDownload(installationId: string): Promise<void>
@@ -1449,13 +1286,10 @@ export interface ElectronApi {
    *  sequence the Cloud pick path uses. Returns an unsubscribe. */
   onFirstUseSkip(callback: () => void): Unsubscribe
   /** Main forwards both the title-bar feedback button and the file-menu
-   *  "Send Feedback" entry here. The panel renderer fires the
-   *  `comfy.desktop.feedback.opened` telemetry action (with `source` so we
-   *  can tell the two affordances apart) and opens the support URL via
-   *  `openExternal` — the renderer is the natural home because
-   *  `buildSupportUrl()` reads `navigator.userAgent` and the telemetry
-   *  helpers live renderer-side. Returns an unsubscribe. */
-  onOpenFeedback(callback: (data: { source: 'titlebar' | 'menu' }) => void): Unsubscribe
+   *  "Send Feedback" entry here. The panel renderer opens the feedback
+   *  modal — the renderer is the natural home because `buildSupportUrl()`
+   *  reads `navigator.userAgent`. Returns an unsubscribe. */
+  onOpenFeedback(callback: () => void): Unsubscribe
   /** Main forwards the title-bar news-bell click here so the panel renderer
    *  mounts the announcement modal over the live canvas. Returns an
    *  unsubscribe. */
@@ -1617,7 +1451,7 @@ export interface ElectronApi {
    *  without side effects — the pending set is only cleared by
    *  `acknowledgeBetaNotice`, so a card that is shown but never retired comes
    *  back on the next launch. `description` carries the feature name the
-   *  PostHog payload supplied, when it supplied one. */
+   *  ops-flag payload supplied, when it supplied one. */
   getPendingBetaNotice(installationId: string): Promise<BetaActivationNotice | null>
   /** Retire this install's activation notice: the args are persisted as
    *  announced and never raise a card again. Called when the user dismisses
@@ -1649,14 +1483,6 @@ export interface ElectronApi {
   relaunchApp(): Promise<void>
   resetZoom(): Promise<void>
   getSystemInfo(): Promise<SystemInfo>
-  getInstallationDdContext(installationId: string): Promise<InstallationDdContext | null>
-  /** Per-session boot census of every persisted install (metadata +
-   *  snapshot diff counts). Powers the `comfy.desktop.session.installs_inventory`
-   *  telemetry event so dashboards see the user's full install footprint
-   *  without waiting for them to launch each one. Byte-capped main-side to
-   *  stay under PostHog's 1 MB per-event limit (shipped as `installs_json`). */
-  getInstallsInventory(): Promise<InstallsInventory>
-  getDeviceId(): Promise<string>
 
   // Dev platform (cloud auth + comfy-builder): the only renderer<->main bridge
   // for this flow. Access/refresh tokens never cross IPC: every method returns
@@ -1731,7 +1557,6 @@ export interface ElectronApi {
   onInstanceCrashed(callback: (data: ComfyExitedData) => void): Unsubscribe
   onTerminalOutput(callback: (data: { installationId: string; data: string }) => void): Unsubscribe
   onTerminalExited(callback: (data: { installationId: string }) => void): Unsubscribe
-  onComfyBootLog(callback: (data: ComfyBootLogData) => void): Unsubscribe
   onInstanceLaunching(
     callback: (data: { installationId: string; installationName: string }) => void
   ): Unsubscribe
@@ -1801,58 +1626,6 @@ export interface ElectronApi {
    *  had one, else its URL) so listeners can drop them in one pass. */
   onModelDownloadsClearedFinished(
     callback: (data: { urls: string[]; refs?: string[] }) => void
-  ): Unsubscribe
-  /**
-   * Forward a renderer-originated telemetry event to main, which captures it
-   * via PostHog Node under the current distinct_id and consent state.
-   *
-   * Replaces the renderer's direct `posthog-js` capture path. Fire-and-forget:
-   * the renderer does not await delivery. Main is the single PostHog capture
-   * point so identity, consent, and dedup all live in one place.
-   */
-  captureTelemetry(event: string, properties: Record<string, unknown>): void
-  /**
-   * Forward a renderer-originated exception to main's PostHog Node
-   * `captureException` path. Used by `window.error` / `unhandledrejection`
-   * handlers and any explicit `try/catch` reporter. Fire-and-forget.
-   */
-  captureExceptionTelemetry(payload: {
-    message: string
-    stack?: string
-    properties?: Record<string, unknown>
-  }): void
-  /**
-   * Update person-level cohort properties on the current PostHog person.
-   * Main holds pre-auth properties until a verified Firebase user is bound.
-   */
-  registerTelemetryProperties(properties: Record<string, unknown>): void
-  /**
-   * Look up an A/B experiment / feature-flag variant for this user.
-   * Returns the cached value (string for multivariate, boolean for a
-   * single-flag rollout) or `null` if the flag is not present in the
-   * cache. Callers MUST default to the control branch on `null`.
-   * Backed by `posthog.getAllFlags` via the boot-time experiments
-   * refresh; see `src/main/lib/experiments.ts`.
-   */
-  telemetryGetExperimentFlag(key: string): Promise<string | boolean | null>
-  /**
-   * Record an A/B experiment exposure. Per-session dedup is enforced
-   * main-side, so it's safe to call this on every render of an
-   * experiment surface (a re-render won't double-count).
-   */
-  telemetryRecordExposure(payload: {
-    experimentKey: string
-    variant: string
-    source?: 'cache' | 'remote' | 'fallback'
-  }): void
-  onTelemetrySettingChanged(callback: (enabled: boolean | undefined) => void): Unsubscribe
-  onDatadogError(callback: (payload: DatadogForwardedError) => void): Unsubscribe
-  onTelemetryActionFromMain(
-    callback: (data: {
-      event: string
-      context: Record<string, unknown>
-      mainAlreadyCaptured?: boolean
-    }) => void
   ): Unsubscribe
   onErrorDetail(callback: (data: ErrorDetailData) => void): Unsubscribe
   onSuggestChineseMirrors(callback: () => void): Unsubscribe

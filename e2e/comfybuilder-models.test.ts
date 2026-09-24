@@ -84,7 +84,7 @@ test.beforeAll(async () => {
   manifestFile = path.join(mkdtempSync(path.join(os.tmpdir(), 'cb-mf-e2e-')), 'manifest.json')
   writeFileSync(manifestFile, JSON.stringify({ models: [] }))
   process.env.COMFY_BUILDER_MODELS_MANIFEST = manifestFile
-  ctx = await launchApp({ settings: { firstUseCompleted: true, telemetryEnabled: false } })
+  ctx = await launchApp({ settings: { firstUseCompleted: true } })
 })
 
 test.afterAll(async () => {

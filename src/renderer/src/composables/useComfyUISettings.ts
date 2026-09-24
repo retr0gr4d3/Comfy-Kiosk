@@ -15,7 +15,6 @@ import { useStopAction } from './useStopAction'
 import { useActionGuard } from './useActionGuard'
 import { useMigrateAction } from './useMigrateAction'
 import { useSessionStore } from '../stores/sessionStore'
-import { emitTelemetryAction, toErrorBucket } from '../lib/telemetry'
 import { progressOpKindForActionId, destroysInstanceForActionId } from '../lib/progressOpKind'
 import {
   REQUIRES_STOPPED,
@@ -400,11 +399,6 @@ export function useComfyUISettings(opts: UseComfyUISettingsOpts): UseComfyUISett
         setRestartDirty(installId, field.id, baseline)
       }
     }
-    emitTelemetryAction('comfy.desktop.settings.changed', {
-      setting_key: field.id,
-      value_kind: field.editType || 'text',
-      bool_value: typeof value === 'boolean' ? value : undefined
-    })
     // A field can declare an `onChangeAction` to fire after its value changes
     // (e.g. switching channel triggers `check-update`).
     if (field.onChangeAction) {
@@ -469,8 +463,6 @@ export function useComfyUISettings(opts: UseComfyUISettingsOpts): UseComfyUISett
       }
       return
     }
-
-    const telemetryContext = { action_id: action.id }
 
     // 1. Busy-only guard. migrate-to-standalone owns its own busy check + UI,
     //    so skip this pre-flight and the step-3 augment (its apiCall still self-stops).
@@ -560,7 +552,6 @@ export function useComfyUISettings(opts: UseComfyUISettingsOpts): UseComfyUISett
             }
           : (): ReturnType<typeof window.api.runAction> =>
               window.api.runAction(inst.id, mutableAction.id, mutableAction.data)
-      emitTelemetryAction('comfy.desktop.action.invoked', telemetryContext)
       opts.onShowProgress({
         installationId: inst.id,
         title,
@@ -584,7 +575,6 @@ export function useComfyUISettings(opts: UseComfyUISettingsOpts): UseComfyUISett
     // hide it and read as a no-op (see MIN_BUSY_FEEDBACK_MS in uiTiming.ts).
     const busyStartedAt = Date.now()
     try {
-      emitTelemetryAction('comfy.desktop.action.invoked', telemetryContext)
       if (wasRunning && requiresStoppedGuard) {
         await stopAndWaitForExit(inst.id, () => sessionStore.isRunning(inst.id))
       }
@@ -594,11 +584,6 @@ export function useComfyUISettings(opts: UseComfyUISettingsOpts): UseComfyUISett
         await actionGuard.checkBeforeAction(inst.id, mutableAction.label)
         return
       }
-      const resultValue = result.cancelled ? 'cancelled' : result.ok === false ? 'failed' : 'ok'
-      emitTelemetryAction('comfy.desktop.action.result', {
-        result: resultValue,
-        ...telemetryContext
-      })
       if (result.navigate === 'list') {
         opts.onClose?.()
         opts.onNavigateList?.()
@@ -615,11 +600,6 @@ export function useComfyUISettings(opts: UseComfyUISettingsOpts): UseComfyUISett
         await reload()
       }
     } catch (err: unknown) {
-      emitTelemetryAction('comfy.desktop.action.result', {
-        result: 'failed',
-        error_bucket: toErrorBucket(err),
-        ...telemetryContext
-      })
       await dialogs.alert({
         title: mutableAction.label,
         message: err instanceof Error ? err.message : String(err)

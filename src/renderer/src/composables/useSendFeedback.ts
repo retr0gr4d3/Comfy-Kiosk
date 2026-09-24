@@ -1,5 +1,4 @@
 import { onMounted, onUnmounted, ref, type Ref } from 'vue'
-import { emitTelemetryAction } from '../lib/telemetry'
 import { buildSupportUrl } from '../lib/supportUrl'
 
 interface UseSendFeedbackApi {
@@ -13,9 +12,8 @@ interface UseSendFeedbackApi {
 
 /**
  * Title-bar Send Feedback button + file-menu "Send Feedback" entry
- * both forward through main to `onOpenFeedback`. Fires the
- * `comfy.desktop.feedback.opened` telemetry action with the originating
- * affordance and opens the in-app feedback modal (iframe-embedded
+ * both forward through main to `onOpenFeedback`, which opens the in-app
+ * feedback modal (iframe-embedded
  * typeform — see `components/FeedbackModal.vue`) so the user never
  * leaves the desktop window.
  *
@@ -30,8 +28,7 @@ export function useSendFeedback(): UseSendFeedbackApi {
   const feedbackUrl = ref('')
   let unsubOpenFeedback: (() => void) | null = null
 
-  function handleOpenFeedback(source: 'titlebar' | 'menu'): void {
-    emitTelemetryAction('comfy.desktop.feedback.opened', { source })
+  function handleOpenFeedback(): void {
     feedbackUrl.value = buildSupportUrl(appVersion.value || undefined)
     feedbackOpen.value = true
   }
@@ -46,9 +43,7 @@ export function useSendFeedback(): UseSendFeedbackApi {
   }
 
   onMounted(() => {
-    unsubOpenFeedback = window.api.onOpenFeedback(({ source }) => {
-      handleOpenFeedback(source)
-    })
+    unsubOpenFeedback = window.api.onOpenFeedback(handleOpenFeedback)
 
     void window.api
       .getAppVersion()

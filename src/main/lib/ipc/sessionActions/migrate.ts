@@ -16,7 +16,6 @@ import type { InstallationRecord } from '../shared'
 import { adoptDesktopInstall, type AdoptPromptKind, type UserChoice } from '../../desktopAdopt'
 import type { ActionContext, ActionResult } from './types'
 import type { AdoptPromptAck, AdoptPromptResponse } from '../../../../types/ipc'
-import * as telemetry from '../../telemetry'
 
 interface PromptSpec {
   type: 'info' | 'warning' | 'error' | 'question'
@@ -293,31 +292,19 @@ export async function handleMigrateToStandalone({
   const abort = new AbortController()
   _operationAborts.set(installationId, abort)
 
-  const flowContext = {
-    source_id: inst.sourceId as string,
-    source_installation_id: inst.id
-  }
-
   // Desktop source → adopt the legacy install in place (the legacy record
   // is left alone), returning a fresh standalone record.
   if (inst.sourceId === 'desktop') {
     let adopted: InstallationRecord | null = null
     try {
-      adopted = await telemetry.trackedStep(
-        'comfy.desktop.migrate.flow',
-        flowContext,
-        async () => {
-          return adoptDesktopInstall({
-            tools: {
-              sendProgress,
-              sendOutput,
-              signal: abort.signal,
-              promptUser: (kind, ctx) => showAdoptPrompt(sender, abort.signal, kind, ctx)
-            }
-          })
-        },
-        { canonicalError: true }
-      )
+      adopted = await adoptDesktopInstall({
+        tools: {
+          sendProgress,
+          sendOutput,
+          signal: abort.signal,
+          promptUser: (kind, ctx) => showAdoptPrompt(sender, abort.signal, kind, ctx)
+        }
+      })
       _operationAborts.delete(installationId)
       sendProgress('done', { percent: 100, status: i18n.t('common.done') })
       return { ok: true, navigate: 'list', newInstallationId: adopted.id }
@@ -354,14 +341,7 @@ export async function handleMigrateToStandalone({
       sourceMap,
       uniqueName
     }
-    const result = await telemetry.trackedStep(
-      'comfy.desktop.migrate.flow',
-      flowContext,
-      async () => {
-        return performLocalMigration(inst, actionData, migrationTools)
-      },
-      { canonicalError: true }
-    )
+    const result = await performLocalMigration(inst, actionData, migrationTools)
     entry = result.entry
     destPath = result.destPath
 

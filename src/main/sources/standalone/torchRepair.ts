@@ -17,8 +17,6 @@ import { createCache } from '../../lib/cache'
 import { download } from '../../lib/download'
 import { extractNested as extract } from '../../lib/extract'
 import * as settings from '../../settings'
-import * as telemetry from '../../lib/telemetry'
-import { buildErrorFields } from '../../../shared/errorEvent'
 import type { InstallationRecord } from '../../installations'
 
 // Vendor variant → the accelerator tag fragment its torch wheel carries. CPU and
@@ -347,7 +345,6 @@ export async function maybeRepairTorch(
       tools.sendOutput?.(
         `\nWARNING: could not recover PyTorch packages from an interrupted repair: ${(err as Error).message}\n`
       )
-      telemetry.emit('comfy.desktop.torch_repair.recovery_failed', { ...buildErrorFields(err) })
     }
   }
 
@@ -361,11 +358,6 @@ export async function maybeRepairTorch(
   const mismatch = getTorchVendorMismatch(installation)
   if (!mismatch) return false
 
-  telemetry.emit('comfy.desktop.torch_repair.detected', {
-    variant: mismatch.variantBase,
-    installed_version: mismatch.installedVersion,
-    installed_tag: mismatch.installedTag || 'none'
-  })
   tools.sendOutput?.(
     `\nDetected CPU PyTorch on a ${mismatch.variantBase.toUpperCase()} install; restoring the GPU build…\n`
   )
@@ -393,17 +385,11 @@ export async function maybeRepairTorch(
         ? { lastVerifiedTorchStack: result.restoredRef, observedTorchStack: null }
         : {})
     })
-    telemetry.emit('comfy.desktop.torch_repair.succeeded', { variant: mismatch.variantBase })
     tools.sendOutput?.('GPU PyTorch restored.\n')
     return true
   }
 
   await tools.update({ torchRepair: { status: 'failed', attempts, at: Date.now() } })
-  telemetry.emit('comfy.desktop.torch_repair.failed', {
-    variant: mismatch.variantBase,
-    attempts,
-    ...buildErrorFields(result.message)
-  })
   tools.sendOutput?.(`PyTorch repair failed (will retry on next launch): ${result.message}\n`)
   return false
 }

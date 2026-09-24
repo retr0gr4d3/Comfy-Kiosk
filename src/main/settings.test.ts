@@ -33,9 +33,6 @@ let settings: {
   has: (key: string) => boolean
   defaults: { onAppClose: 'tray' | 'quit' }
   resolveBetaFeaturesEnabled: () => boolean
-  getTrackedSettingsTelemetryProperties: (
-    keys?: readonly string[]
-  ) => Record<string, boolean | number | string | null>
 }
 
 const settingsPath =
@@ -492,182 +489,6 @@ describe('modelsDirs user ordering', () => {
   })
 })
 
-describe('getTrackedSettingsTelemetryProperties (telemetry policy)', () => {
-  const realPlatform = process.platform
-
-  function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
-    Object.defineProperty(process, 'platform', { value: platform, configurable: true })
-    try {
-      return fn()
-    } finally {
-      Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true })
-    }
-  }
-
-  it('autoInstallUpdates: effective value plus an explicit-set companion', () => {
-    // Unset => default-on and not explicit.
-    expect(settings.getTrackedSettingsTelemetryProperties(['autoInstallUpdates'])).toEqual({
-      auto_install_updates: true,
-      auto_install_updates_explicit: false
-    })
-    // Explicit false => off and explicit.
-    settings.set('autoInstallUpdates', false)
-    expect(settings.getTrackedSettingsTelemetryProperties(['autoInstallUpdates'])).toEqual({
-      auto_install_updates: false,
-      auto_install_updates_explicit: true
-    })
-    // Explicit true => on and explicit (distinct from the default-on majority).
-    settings.set('autoInstallUpdates', true)
-    expect(settings.getTrackedSettingsTelemetryProperties(['autoInstallUpdates'])).toEqual({
-      auto_install_updates: true,
-      auto_install_updates_explicit: true
-    })
-  })
-
-  it('language: emits only the selected value (null when following the OS default)', () => {
-    // Effective locale lives on the app.language_resolved event, not here.
-    expect(settings.getTrackedSettingsTelemetryProperties(['language'])).toEqual({
-      setting_language_selected: null
-    })
-    settings.set('language', 'zh')
-    expect(settings.getTrackedSettingsTelemetryProperties(['language'])).toEqual({
-      setting_language_selected: 'zh'
-    })
-  })
-
-  it('omits the legacy autoUpdate setting entirely', () => {
-    settings.set('autoUpdate', false)
-    expect(settings.getTrackedSettingsTelemetryProperties()).not.toHaveProperty(
-      'setting_auto_update'
-    )
-  })
-
-  it('scalar value settings emit their typed value, never a hand-edited string', () => {
-    // onAppClose enum + maxCachedDownloads number pass through when valid
-    // (onAppClose resolves to its 'quit' default while tray docking is disabled).
-    settings.set('maxCachedDownloads', 5)
-    expect(
-      settings.getTrackedSettingsTelemetryProperties(['onAppClose', 'maxCachedDownloads'])
-    ).toEqual({
-      setting_on_app_close: 'quit',
-      setting_max_cached_downloads: 5
-    })
-    // A corrupt/hand-edited settings.json can't leak a free-form string.
-    fs.writeFileSync(
-      settingsPath,
-      JSON.stringify({ onAppClose: '/Users/me/secret', maxCachedDownloads: 'lots' }),
-      'utf-8'
-    )
-    expect(
-      settings.getTrackedSettingsTelemetryProperties(['onAppClose', 'maxCachedDownloads'])
-    ).toEqual({
-      setting_on_app_close: null,
-      setting_max_cached_downloads: null
-    })
-  })
-
-  it('omits the dark-only theme setting entirely', () => {
-    settings.set('theme', 'light')
-    const props = settings.getTrackedSettingsTelemetryProperties()
-    expect(props).not.toHaveProperty('setting_theme')
-    expect(props).not.toHaveProperty('setting_theme_selected')
-  })
-
-  it('default-off useChineseMirrors: unset reports false, explicit true reports true', () => {
-    expect(settings.getTrackedSettingsTelemetryProperties(['useChineseMirrors'])).toEqual({
-      setting_use_chinese_mirrors: false
-    })
-    settings.set('useChineseMirrors', true)
-    expect(settings.getTrackedSettingsTelemetryProperties(['useChineseMirrors'])).toEqual({
-      setting_use_chinese_mirrors: true
-    })
-  })
-
-  it('hardwareAcceleration: unset reports enabled and explicit false reports disabled', () => {
-    expect(settings.getTrackedSettingsTelemetryProperties(['hardwareAcceleration'])).toEqual({
-      setting_hardware_acceleration: true
-    })
-    settings.set('hardwareAcceleration', false)
-    expect(settings.getTrackedSettingsTelemetryProperties(['hardwareAcceleration'])).toEqual({
-      setting_hardware_acceleration: false
-    })
-  })
-
-  it('Windows-only installUpdatesOnStartup: default-on true on win32, false when opted out', () => {
-    withPlatform('win32', () => {
-      expect(settings.getTrackedSettingsTelemetryProperties(['installUpdatesOnStartup'])).toEqual({
-        install_updates_on_startup: true
-      })
-    })
-    settings.set('installUpdatesOnStartup', false)
-    withPlatform('win32', () => {
-      expect(settings.getTrackedSettingsTelemetryProperties(['installUpdatesOnStartup'])).toEqual({
-        install_updates_on_startup: false
-      })
-    })
-  })
-
-  it('Windows-only gates report null off-Windows (not applicable, not opted out)', () => {
-    withPlatform('darwin', () => {
-      expect(
-        settings.getTrackedSettingsTelemetryProperties([
-          'installUpdatesOnStartup',
-          'showInstallerUI'
-        ])
-      ).toEqual({
-        install_updates_on_startup: null,
-        setting_show_installer_ui: null
-      })
-    })
-  })
-
-  it('path settings emit presence booleans, never the raw path', () => {
-    const before = settings.getTrackedSettingsTelemetryProperties([
-      'installDir',
-      'modelsDirs',
-      'cacheDir'
-    ])
-    expect(before).toEqual({
-      setting_install_dir: false,
-      setting_models_dirs: false,
-      setting_cache_dir: false
-    })
-    settings.set('installDir', path.join(homePath, 'Custom', 'Installs'))
-    const after = settings.getTrackedSettingsTelemetryProperties(['installDir'])
-    expect(after.setting_install_dir).toBe(true)
-    expect(Object.values(after).every((v) => typeof v !== 'string')).toBe(true)
-  })
-
-  it('autoLaunchOnStartup emits presence (bool-ified), never the install id', () => {
-    expect(settings.getTrackedSettingsTelemetryProperties(['autoLaunchOnStartup'])).toEqual({
-      setting_auto_launch_on_startup: false
-    })
-    settings.set('autoLaunchOnStartup', 'some-install-id')
-    expect(settings.getTrackedSettingsTelemetryProperties(['autoLaunchOnStartup'])).toEqual({
-      setting_auto_launch_on_startup: true
-    })
-  })
-
-  it('omits internal bookkeeping and consent keys', () => {
-    settings.set('firstUseCompleted', true)
-    settings.set('telemetryEnabled', true)
-    settings.set('chineseMirrorsPrompted', true)
-    const props = settings.getTrackedSettingsTelemetryProperties()
-    expect(props).not.toHaveProperty('setting_first_use_completed')
-    expect(props).not.toHaveProperty('setting_telemetry_enabled')
-    expect(props).not.toHaveProperty('setting_chinese_mirrors_prompted')
-  })
-
-  it('full snapshot includes both #1220 exact names and never emits arrays/objects', () => {
-    const props = withPlatform('win32', () => settings.getTrackedSettingsTelemetryProperties())
-    expect(props).toHaveProperty('auto_install_updates')
-    expect(props).toHaveProperty('install_updates_on_startup')
-    for (const value of Object.values(props)) {
-      expect(['boolean', 'number', 'string']).toContain(value === null ? 'boolean' : typeof value)
-    }
-  })
-})
-
 describe('locked settings.json served from .bak (issue #1367)', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -703,11 +524,12 @@ describe('locked settings.json served from .bak (issue #1367)', () => {
 })
 
 // The beta-features toggle is the gate for injecting core beta launch args.
-// It is deliberately NOT telemetry consent: gating on consent creates a trap
-// where a user hitting beta bugs escapes by disabling telemetry, killing the
-// diagnostics exactly when they matter. Consent only ever seeds the initial
-// value, once.
+// It defaults off and is only ever changed by an explicit user choice.
 describe('resolveBetaFeaturesEnabled', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   it.each([true, false])(
     'retains a stored %s from a backup when the primary is unreadable',
     (choice) => {
@@ -732,89 +554,25 @@ describe('resolveBetaFeaturesEnabled', () => {
     }
   )
 
-  it('does not enroll from a stale telemetry backup when the primary is unreadable', () => {
-    fs.mkdirSync(path.dirname(settingsPath), { recursive: true })
-    fs.writeFileSync(settingsPath, JSON.stringify({ telemetryEnabled: false }))
-    fs.writeFileSync(settingsPath + '.bak', JSON.stringify({ telemetryEnabled: true }))
-
-    const realRead = fs.readFileSync.bind(fs) as typeof fs.readFileSync
-    vi.spyOn(fs, 'readFileSync').mockImplementation(((
-      p: fs.PathOrFileDescriptor,
-      opts?: unknown
-    ) => {
-      if (p === settingsPath) {
-        const err = new Error('fake EPERM') as NodeJS.ErrnoException
-        err.code = 'EPERM'
-        throw err
-      }
-      return realRead(p, opts as BufferEncoding)
-    }) as typeof fs.readFileSync)
-
-    expect(settings.resolveBetaFeaturesEnabled()).toBe(false)
-
-    vi.restoreAllMocks()
-    expect(readPersistedSettings()).toEqual({ telemetryEnabled: false })
-  })
-
-  it('returns a stored true without consulting telemetry consent', () => {
+  it('returns a stored true', () => {
     settings.set('betaFeaturesEnabled', true)
-    settings.set('telemetryEnabled', false)
-
     expect(settings.resolveBetaFeaturesEnabled()).toBe(true)
-    expect(readPersistedSettings()['betaFeaturesEnabled']).toBe(true)
   })
 
-  it('returns a stored false without consulting telemetry consent', () => {
+  it('returns a stored false', () => {
     settings.set('betaFeaturesEnabled', false)
-    settings.set('telemetryEnabled', true)
-
     expect(settings.resolveBetaFeaturesEnabled()).toBe(false)
-    expect(readPersistedSettings()['betaFeaturesEnabled']).toBe(false)
   })
 
-  it('seeds true from an existing telemetry opt-in and persists the seed', () => {
-    settings.set('telemetryEnabled', true)
+  it('reads as off, without writing anything, when the choice was never recorded', () => {
     expect(settings.get('betaFeaturesEnabled')).toBeUndefined()
 
-    expect(settings.resolveBetaFeaturesEnabled()).toBe(true)
-    expect(readPersistedSettings()['betaFeaturesEnabled']).toBe(true)
-  })
-
-  it('seeds false from an explicit telemetry opt-out and persists the seed', () => {
-    settings.set('telemetryEnabled', false)
-
     expect(settings.resolveBetaFeaturesEnabled()).toBe(false)
-    expect(readPersistedSettings()['betaFeaturesEnabled']).toBe(false)
+    expect(fs.existsSync(settingsPath)).toBe(false)
   })
 
-  // Desktop-1 migrants have no telemetryEnabled key at all (see the migrator
-  // note at src/main/index.ts). Absent consent must seed OFF, not ON.
-  it('seeds false when telemetryEnabled was never recorded', () => {
-    expect(settings.get('telemetryEnabled')).toBeUndefined()
-
-    expect(settings.resolveBetaFeaturesEnabled()).toBe(false)
-    expect(readPersistedSettings()['betaFeaturesEnabled']).toBe(false)
-  })
-
-  // The trap this whole design exists to kill: once seeded, the value is the
-  // user's own, and revoking telemetry consent must never eject them.
-  it('ignores a telemetry flip after seeding', () => {
+  it('ignores a leftover telemetryEnabled key from an upstream profile', () => {
     settings.set('telemetryEnabled', true)
-    expect(settings.resolveBetaFeaturesEnabled()).toBe(true)
-
-    settings.set('telemetryEnabled', false)
-
-    expect(settings.resolveBetaFeaturesEnabled()).toBe(true)
-    expect(readPersistedSettings()['betaFeaturesEnabled']).toBe(true)
-  })
-
-  it('does not re-seed a stored false when telemetry is later granted', () => {
-    settings.set('telemetryEnabled', false)
     expect(settings.resolveBetaFeaturesEnabled()).toBe(false)
-
-    settings.set('telemetryEnabled', true)
-
-    expect(settings.resolveBetaFeaturesEnabled()).toBe(false)
-    expect(readPersistedSettings()['betaFeaturesEnabled']).toBe(false)
   })
 })

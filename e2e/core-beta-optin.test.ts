@@ -1,17 +1,14 @@
 /**
- * Beta-features opt-in consent gate — title-popup Global Settings.
+ * Beta-features opt-in — title-popup Global Settings.
  *
- * The opt-in is one-way gated: turning it ON requires explicit telemetry
- * consent, turning it OFF never does. The gate is derived renderer-side in
- * `GlobalSettingsView.vue` (`turnOnDisabled: !snapshot.telemetryGranted`) and
- * rendered by `BooleanToggle.vue`, which keys the blocked state on
- * `aria-disabled` rather than the native `disabled` attribute so the control
- * stays focusable. These assertions therefore read the ARIA state, not the
- * dimming CSS class that rides along with it.
+ * The opt-in has no prerequisite: the switch is live in both directions.
+ * `BooleanToggle.vue` keys a blocked state on `aria-disabled` rather than the
+ * native `disabled` attribute, so these assertions read the ARIA state to
+ * prove the row is never blocked.
  *
- * Consent is seeded pre-launch (`SeedOptions.settings`) because
- * `telemetryGranted` is computed once per snapshot from persisted settings, so
- * each state needs its own app instance rather than in-test mutation.
+ * The opt-in is seeded pre-launch (`SeedOptions.settings`) because the
+ * snapshot is built from persisted settings, so each state gets its own app
+ * instance rather than in-test mutation.
  */
 
 import { expect, test } from '@playwright/test'
@@ -30,9 +27,6 @@ test.describe.configure({ mode: 'serial' })
  *  `aria-label`, since `BooleanToggle` labels itself from `field.label`. */
 const BETA_LABEL = 'Opt in to beta features'
 const BETA_SWITCH = `.global-settings button[role="switch"][aria-label="${BETA_LABEL}"]`
-/** `tooltips.betaFeaturesNeedTelemetry` in locales/en.json. */
-const NEEDS_TELEMETRY_TOOLTIP =
-  'Beta features require confirming data sharing in Settings, even if telemetry is currently on.'
 
 interface BetaRowState {
   /** `null` when the attribute is absent; Vue renders `"false"` when enabled. */
@@ -64,7 +58,7 @@ async function readBetaRow(popup: WebContentsPage): Promise<BetaRowState | null>
   })()`)
 }
 
-/** Walk the real UI to the Privacy section: title menu -> Desktop Settings ->
+/** Walk the real UI to the beta section: title menu -> Desktop Settings ->
  *  General tab (the default landing tab). Closes any open popup first so the
  *  walk is identical whichever test ran before it. */
 async function openDesktopSettings(ctx: AppContext, popup: WebContentsPage): Promise<void> {
@@ -77,8 +71,8 @@ async function openDesktopSettings(ctx: AppContext, popup: WebContentsPage): Pro
   await popup.waitForVisible(BETA_SWITCH, { timeout: 10_000 })
 }
 
-/** Launch an app instance seeded with a given consent/opt-in pair, bound to
- *  the enclosing describe block. */
+/** Launch an app instance seeded with a given opt-in state, bound to the
+ *  enclosing describe block. */
 function betaScenario(settings: Record<string, unknown>): () => WebContentsPage {
   let ctx: AppContext
   let popup: WebContentsPage
@@ -99,56 +93,27 @@ function betaScenario(settings: Record<string, unknown>): () => WebContentsPage 
   return () => popup
 }
 
-test.describe('telemetry consent not granted', () => {
-  const popup = betaScenario({ telemetryEnabled: false, betaFeaturesEnabled: false })
+test.describe('opt-in off', () => {
+  const popup = betaScenario({ betaFeaturesEnabled: false })
 
-  test('the beta opt-in row is disabled while consent is withheld @windows @macos @linux', async () => {
-    const state = await readBetaRow(popup())
-    expect(state, 'beta opt-in switch missing from Global Settings').not.toBeNull()
-    expect(state!.ariaDisabled).toBe('true')
-    expect(state!.ariaChecked).toBe('false')
-  })
-
-  test('clicking the blocked beta opt-in row does not turn it on @windows @macos @linux', async () => {
-    expect(await popup().click(BETA_SWITCH)).toBe(true)
-    // The handler bails synchronously, but allow a frame for a mistaken state
-    // flip to land before asserting it did not.
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    const state = await readBetaRow(popup())
-    expect(state!.ariaChecked).toBe('false')
-    expect(state!.ariaDisabled).toBe('true')
-  })
-
-  test('the blocked beta opt-in row explains why via its tooltip @windows @macos @linux', async () => {
-    const state = await readBetaRow(popup())
-    // Present and non-empty: an absent or blank `title` leaves the user with a
-    // dimmed control and no stated reason.
-    expect(state!.title).not.toBeNull()
-    expect(state!.title!.trim().length).toBeGreaterThan(0)
-    // Resolved copy, not the raw key — catches a missing translation entry,
-    // which would still be "present and non-empty".
-    expect(state!.title).not.toBe('tooltips.betaFeaturesNeedTelemetry')
-    expect(state!.title).toBe(NEEDS_TELEMETRY_TOOLTIP)
-    // `title` is mouse-only, so the same reason must reach the a11y tree.
-    expect(state!.describedText).toBe(NEEDS_TELEMETRY_TOOLTIP)
-  })
-})
-
-test.describe('telemetry consent granted, opt-in off', () => {
-  const popup = betaScenario({ telemetryEnabled: true, betaFeaturesEnabled: false })
-
-  test('the beta opt-in row is enabled and off once consent is granted @windows @macos @linux', async () => {
+  test('the beta opt-in row is enabled and off @windows @macos @linux', async () => {
     const state = await readBetaRow(popup())
     expect(state, 'beta opt-in switch missing from Global Settings').not.toBeNull()
     expect(state!.ariaDisabled).toBe('false')
     expect(state!.ariaChecked).toBe('false')
     // Unblocked rows carry no explanatory tooltip at all.
     expect(state!.title).toBeNull()
+    expect(state!.describedText).toBeNull()
+  })
+
+  test('clicking the beta opt-in row turns it on @windows @macos @linux', async () => {
+    expect(await popup().click(BETA_SWITCH)).toBe(true)
+    await expect.poll(async () => (await readBetaRow(popup()))?.ariaChecked).toBe('true')
   })
 })
 
-test.describe('telemetry consent granted, opt-in on', () => {
-  const popup = betaScenario({ telemetryEnabled: true, betaFeaturesEnabled: true })
+test.describe('opt-in on', () => {
+  const popup = betaScenario({ betaFeaturesEnabled: true })
 
   test('the beta opt-in row is enabled and on when opted in @windows @macos @linux', async () => {
     const state = await readBetaRow(popup())

@@ -28,9 +28,7 @@ const messages = {
       migrateBannerTitle: 'Migrate to Standalone',
       migrateBannerDesc: 'Your Legacy Desktop installation was detected.',
       migrateBannerAction: 'Migrate Now',
-      migrateBannerSkip: 'New Install Without Migrating',
-      telemetryNotice: 'Anonymous telemetry is collected.',
-      telemetrySettings: 'Manage in Settings'
+      migrateBannerSkip: 'New Install Without Migrating'
     },
     desktop: { migrating: 'Migrating' }
   }
@@ -106,14 +104,6 @@ describe('MigrationBanner', () => {
       ;(migrateBtn.element as HTMLButtonElement).click()
       await flushPromises()
       expect(wrapper.emitted('show-quick-install')).toBeUndefined()
-    })
-
-    it('emits show-settings when telemetry link is clicked', async () => {
-      const wrapper = mountBanner()
-      const link = findButtonByText(wrapper, 'Manage in Settings')!
-      ;(link.element as HTMLButtonElement).click()
-      await nextTick()
-      expect(wrapper.emitted('show-settings')).toHaveLength(1)
     })
   })
 })

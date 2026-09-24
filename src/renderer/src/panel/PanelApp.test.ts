@@ -142,7 +142,6 @@ import PanelApp from './PanelApp.vue'
 import { __resetLauncherPrefsForTest } from '../composables/useLauncherPrefs'
 import { useOverlay } from '../composables/useOverlay'
 import { useDashboardScopeStore } from '../stores/dashboardScopeStore'
-import { TELEMETRY_ACTION_EVENT_NAME, type TelemetryActionEventDetail } from '../lib/telemetry'
 
 // Panel scopes (including queued media prefetches) are disposed before
 // happy-dom tears down document by the suite-wide `enableAutoUnmount` in
@@ -285,7 +284,7 @@ interface MockApiState {
    *  title-bar Send Feedback button or the file-menu "Send Feedback"
    *  entry; tests can simulate the click by invoking each callback
    *  with the originating `source`. */
-  openFeedbackCallbacks: ((data: { source: 'titlebar' | 'menu' }) => void)[]
+  openFeedbackCallbacks: (() => void)[]
   /** Window-close consult callbacks. Main fires `comfy-window:request-close`
    *  when the user clicks the ✕; tests fire each callback to simulate that. */
   closeRequestCallbacks: ((data: { requestId: string }) => void)[]
@@ -432,7 +431,7 @@ function installMockApi(initial?: {
       state.firstUseSkipCallbacks.push(cb)
       return () => {}
     }),
-    onOpenFeedback: vi.fn((cb: (data: { source: 'titlebar' | 'menu' }) => void) => {
+    onOpenFeedback: vi.fn((cb: () => void) => {
       state.openFeedbackCallbacks.push(cb)
       return () => {}
     }),
@@ -1174,7 +1173,6 @@ describe('PanelApp', () => {
     expect(wrapper.find('[data-testid="chooser-view"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="new-install-modal"]').exists()).toBe(true)
     expect(installWizardOpen).toHaveBeenCalledWith({
-      entrypoint: 'chooser',
       workspaceId: 'personal'
     })
     expect(mockState.getSetting).toHaveBeenCalledWith('dashboardWorkspaceId')
@@ -1198,7 +1196,6 @@ describe('PanelApp', () => {
     await flushPromises()
 
     expect(installWizardOpen).toHaveBeenCalledWith({
-      entrypoint: 'titlebar',
       workspaceId: 'workspace-saved'
     })
   })
@@ -1226,13 +1223,12 @@ describe('PanelApp', () => {
 
     await wrapper.get('[data-testid="chooser-new-install"]').trigger('click')
     await flushPromises()
-    expect(installWizardOpen).toHaveBeenLastCalledWith({ entrypoint: 'chooser', workspaceId: 'w2' })
+    expect(installWizardOpen).toHaveBeenLastCalledWith({ workspaceId: 'w2' })
     await wrapper.findComponent({ name: 'InstallWizardModal' }).vm.$emit('close')
     await flushPromises()
     mockState.panelSwitchCallbacks.forEach((cb) => cb({ panel: 'new-install' }))
     await flushPromises()
     expect(installWizardOpen).toHaveBeenLastCalledWith({
-      entrypoint: 'titlebar',
       workspaceId: 'w2'
     })
     expect(warning).toHaveBeenCalledOnce()
@@ -1259,13 +1255,11 @@ describe('PanelApp', () => {
     mockState.panelSwitchCallbacks.forEach((cb) => cb({ panel: 'new-install' }))
     await flushPromises()
     expect(installWizardOpen).toHaveBeenCalledExactlyOnceWith({
-      entrypoint: 'titlebar',
       workspaceId: 'w1'
     })
     resolveMembership([{ id: 'w1', name: 'One', type: 'team', role: 'owner' }])
     await flushPromises()
     expect(installWizardOpen).toHaveBeenCalledExactlyOnceWith({
-      entrypoint: 'titlebar',
       workspaceId: 'w1'
     })
   })
@@ -1283,7 +1277,6 @@ describe('PanelApp', () => {
     await flushPromises()
 
     expect(installWizardOpen).toHaveBeenCalledWith({
-      entrypoint: 'titlebar',
       workspaceId: 'personal'
     })
   })
@@ -1744,42 +1737,20 @@ describe('PanelApp', () => {
     expect(wrapper.find('[data-testid="chooser-view"]').exists()).toBe(true)
   })
 
-  it('emits comfy.desktop.feedback.opened with the originating source and opens the support URL', async () => {
+  it('opens the support URL when main asks the panel to open feedback', async () => {
     // Both the title-bar feedback button and the file-menu "Send
     // Feedback" entry route through main's `comfy-panel:open-feedback`
     // IPC. The panel renderer is the natural home for the click side-
-    // effects because `buildSupportUrl()` reads `navigator.userAgent`
-    // and the telemetry helper lives renderer-side. Verify the listener
-    // (a) emits the telemetry action with `source` baked into the
-    // context so we can tell the two affordances apart, and
-    // (b) opens the typeform URL with the cached app version in `ver`.
+    // effects because `buildSupportUrl()` reads `navigator.userAgent`.
+    // Verify the listener opens the typeform URL with the cached app
+    // version in `ver`.
     mountPanel()
     await flushPromises()
 
-    interface TelemetryEvent {
-      actionName: string
-      context?: { source?: string }
-    }
-    const telemetryEvents: TelemetryEvent[] = []
-    const listener = (e: Event): void => {
-      telemetryEvents.push((e as CustomEvent<TelemetryEvent>).detail)
-    }
-    window.addEventListener('launcher-telemetry-action', listener)
-
     expect(mockState.openFeedbackCallbacks.length).toBeGreaterThan(0)
-    // Title-bar button click.
-    mockState.openFeedbackCallbacks.forEach((cb) => cb({ source: 'titlebar' }))
-    await flushPromises()
-    // File-menu entry click.
-    mockState.openFeedbackCallbacks.forEach((cb) => cb({ source: 'menu' }))
+    mockState.openFeedbackCallbacks.forEach((cb) => cb())
     await flushPromises()
 
-    window.removeEventListener('launcher-telemetry-action', listener)
-
-    const feedbackTelemetry = telemetryEvents.filter(
-      (e) => e.actionName === 'comfy.desktop.feedback.opened'
-    )
-    expect(feedbackTelemetry.map((e) => e.context?.source)).toEqual(['titlebar', 'menu'])
     // FeedbackModal teleports its iframe to <body>, so query the
     // document directly rather than the wrapper subtree. The iframe
     // src is the resolved support URL — same payload we used to send
@@ -2058,155 +2029,6 @@ describe('PanelApp', () => {
     )
     await flushPromises()
     expect(wrapper.find('[data-testid="detail-modal"]').exists()).toBe(false)
-  })
-
-  // ---------------------------------------------------------------------------
-  // Telemetry (issue #485) — verify `comfy.desktop.install.flow.opened`
-  // and `comfy.desktop.view.opened` fire from PanelApp's
-  // `openFlowTakeover` / `switchPanel`.
-  //
-  // Captures CustomEvents on the `window` (the same channel
-  // `emitTelemetryAction` uses to bridge into the providers) so the test
-  // doesn't have to mock the Datadog / PostHog modules.
-  // ---------------------------------------------------------------------------
-  describe('telemetry', () => {
-    function captureTelemetry(): TelemetryActionEventDetail[] {
-      const events: TelemetryActionEventDetail[] = []
-      window.addEventListener(TELEMETRY_ACTION_EVENT_NAME, (event) => {
-        events.push((event as CustomEvent<TelemetryActionEventDetail>).detail)
-      })
-      return events
-    }
-
-    it('fires comfy.desktop.install.flow.opened with entrypoint=chooser when chooser empty-state CTA fires', async () => {
-      window.history.replaceState({}, '', '/?panel=chooser&firstUseCompleted=true')
-      const wrapper = mountPanel()
-      await flushPromises()
-      const events = captureTelemetry()
-      await wrapper.find('[data-testid="chooser-new-install"]').trigger('click')
-      await flushPromises()
-      const flowEvents = events.filter((e) => e.actionName === 'comfy.desktop.install.flow.opened')
-      expect(flowEvents).toHaveLength(1)
-      expect(flowEvents[0].context).toMatchObject({
-        flow: 'new_install',
-        entrypoint: 'chooser'
-      })
-    })
-
-    it('fires comfy.desktop.install.flow.opened with entrypoint=titlebar for a panel-switch IPC', async () => {
-      window.history.replaceState({}, '', '/?panel=chooser&firstUseCompleted=true')
-      mountPanel()
-      await flushPromises()
-      const events = captureTelemetry()
-      mockState.panelSwitchCallbacks.forEach((cb) => cb({ panel: 'quick-install' }))
-      await flushPromises()
-      const flowEvents = events.filter((e) => e.actionName === 'comfy.desktop.install.flow.opened')
-      expect(flowEvents).toHaveLength(1)
-      expect(flowEvents[0].context).toMatchObject({
-        flow: 'quick_install',
-        entrypoint: 'titlebar'
-      })
-    })
-
-    it('maps each FlowComponent to its legacy flow string', async () => {
-      window.history.replaceState({}, '', '/?panel=chooser&firstUseCompleted=true')
-      mountPanel()
-      await flushPromises()
-      const events = captureTelemetry()
-      const cases: { panel: string; flow: string }[] = [
-        { panel: 'new-install', flow: 'new_install' },
-        { panel: 'track', flow: 'track_existing' },
-        { panel: 'load-snapshot', flow: 'load_snapshot' },
-        { panel: 'quick-install', flow: 'quick_install' }
-      ]
-      for (const { panel } of cases) {
-        mockState.panelSwitchCallbacks.forEach((cb) => cb({ panel }))
-        await flushPromises()
-        // The takeover slot only holds one component; emit close so the
-        // next case can open. Each *Modal stub emits 'close'.
-        const open = events
-          .filter((e) => e.actionName === 'comfy.desktop.install.flow.opened')
-          .pop()
-        // Dismiss whatever takeover is currently mounted.
-        useOverlay().current.value = null
-        await flushPromises()
-        expect(open?.context?.flow, `panel=${panel}`).toBe(
-          cases.find((c) => c.panel === panel)?.flow
-        )
-      }
-    })
-
-    it('fires comfy.desktop.install.flow.opened with entrypoint=url when the URL initial panel is a flow', async () => {
-      // Captures must be installed BEFORE mount because the URL-driven
-      // initial-panel branch fires from inside `onMounted`.
-      const events = captureTelemetry()
-      window.history.replaceState({}, '', '/?panel=load-snapshot&firstUseCompleted=true')
-      mountPanel()
-      await flushPromises()
-      const flowEvents = events.filter((e) => e.actionName === 'comfy.desktop.install.flow.opened')
-      expect(flowEvents).toHaveLength(1)
-      expect(flowEvents[0].context).toMatchObject({
-        flow: 'load_snapshot',
-        entrypoint: 'url'
-      })
-    })
-
-    it('fires comfy.desktop.install.flow.opened with entrypoint=first_use on the first-use Local-branch chain', async () => {
-      mockState.settings.firstUseCompleted = false
-      window.history.replaceState({}, '', '/?panel=chooser')
-      const wrapper = mountPanel()
-      await flushPromises()
-      const events = captureTelemetry()
-      await wrapper.find('[data-testid="first-use-local"]').trigger('click')
-      await flushPromises()
-      const flowEvents = events.filter((e) => e.actionName === 'comfy.desktop.install.flow.opened')
-      expect(flowEvents).toHaveLength(1)
-      expect(flowEvents[0].context).toMatchObject({
-        flow: 'new_install',
-        entrypoint: 'first_use'
-      })
-    })
-
-    it('does NOT fire comfy.desktop.view.opened when a panel-switch IPC re-confirms the active body panel', async () => {
-      mountPanel()
-      await flushPromises()
-      const events = captureTelemetry()
-      // Default body is comfy-lifecycle; re-confirming it is a no-op.
-      mockState.panelSwitchCallbacks.forEach((cb) => cb({ panel: 'comfy-lifecycle' }))
-      await flushPromises()
-      expect(events.filter((e) => e.actionName === 'comfy.desktop.view.opened')).toHaveLength(0)
-    })
-
-    it('does NOT fire comfy.desktop.install.flow.opened when openFlowTakeover is rejected by an in-flight Tier 2 op', async () => {
-      // useOverlay's tier-collision rules can reject a Tier 3 open if a
-      // Tier 2 progress op is in flight and the user cancels the
-      // confirm-prompt. The renderer must not fire the telemetry event
-      // when the takeover never actually mounted. Simulate by pre-
-      // populating the overlay slot with a progress op (Tier 2) and
-      // routing a flow open through panel-switch — useOverlay will
-      // request confirmation via window.api which our mock leaves
-      // unresolved, so openOverlay returns false.
-      window.history.replaceState({}, '', '/?panel=chooser&firstUseCompleted=true')
-      mountPanel()
-      await flushPromises()
-      // Pre-populate Tier 2 progress overlay.
-      useOverlay().current.value = {
-        kind: 'progress',
-        installationId: 'test-id',
-        operationName: 'install',
-        onCancel: () => {}
-      }
-      const events = captureTelemetry()
-      // Trigger the flow open. The collision logic in useOverlay will
-      // either prompt (default-deny in tests since no confirm handler is
-      // wired) or silently reject — either way openFlowTakeover should
-      // bail before emitting telemetry.
-      mockState.panelSwitchCallbacks.forEach((cb) => cb({ panel: 'new-install' }))
-      await flushPromises()
-      expect(
-        events.filter((e) => e.actionName === 'comfy.desktop.install.flow.opened')
-      ).toHaveLength(0)
-    })
   })
 
   describe('window close consult', () => {

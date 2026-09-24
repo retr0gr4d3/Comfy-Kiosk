@@ -11,13 +11,11 @@ import {
 
 const h = vi.hoisted(() => ({
   beginSessionInjection: vi.fn(() => ({ owner: 'test' })),
-  bindSignedInUser: vi.fn(),
-  capture: vi.fn(),
-  emit: vi.fn(),
   injectSession: vi.fn(() => Promise.resolve(true)),
   openExternal: vi.fn(() => Promise.resolve()),
   releaseSessionInjection: vi.fn(),
   restoreParentWindow: vi.fn(),
+  signInFailed: vi.fn(),
   signInViaDesktopLoginCode: vi.fn(),
   startBridgeServer: vi.fn()
 }))
@@ -36,19 +34,23 @@ vi.mock('./inject', () => ({
 }))
 vi.mock('./restoreParentWindow', () => ({ restoreParentWindow: h.restoreParentWindow }))
 vi.mock('./server', () => ({ startBridgeServer: h.startBridgeServer }))
-vi.mock('./flowShared', async (importOriginal) => ({
-  ...(await importOriginal<typeof FlowSharedModule>()),
-  bindSignedInUser: h.bindSignedInUser
-}))
+vi.mock('./flowShared', async (importOriginal) => {
+  const actual = await importOriginal<typeof FlowSharedModule>()
+  return {
+    ...actual,
+    // Records every surfaced failure so tests can tell a reported failure
+    // from a silent cancel.
+    describeSignInFailure: (...args: Parameters<typeof actual.describeSignInFailure>) => {
+      const failure = actual.describeSignInFailure(...args)
+      h.signInFailed(failure)
+      return failure
+    }
+  }
+})
 vi.mock('../desktopLoginCode', () => ({
   signInViaDesktopLoginCode: h.signInViaDesktopLoginCode
 }))
 vi.mock('../../lib/i18n', () => ({ t: (key: string) => key }))
-vi.mock('../../lib/telemetry', () => ({
-  bucketError: () => 'other',
-  capture: h.capture,
-  emit: h.emit
-}))
 
 const AUTH_URL = 'https://dreamboothy.firebaseapp.com/__/auth/handler?providerId=google.com'
 
@@ -117,7 +119,6 @@ describe('handleFirebasePopup legacy flow', () => {
     await flow
 
     expect(h.injectSession).not.toHaveBeenCalled()
-    expect(h.bindSignedInUser).not.toHaveBeenCalled()
     expect(h.restoreParentWindow).not.toHaveBeenCalled()
   })
 
@@ -134,7 +135,6 @@ describe('handleFirebasePopup legacy flow', () => {
     await flow
 
     expect(h.injectSession).not.toHaveBeenCalled()
-    expect(h.bindSignedInUser).not.toHaveBeenCalled()
     expect(h.restoreParentWindow).not.toHaveBeenCalled()
   })
 
@@ -149,11 +149,7 @@ describe('handleFirebasePopup legacy flow', () => {
 
     const staleFlow = handleFirebasePopup(AUTH_URL, contents)
     await vi.advanceTimersByTimeAsync(0)
-    expect(h.bindSignedInUser).not.toHaveBeenCalled()
-    expect(h.capture).toHaveBeenCalledWith('comfy.desktop.auth.sign_in_started', {
-      provider: 'google.com',
-      flow: 'loopback_bridge'
-    })
+    expect(h.injectSession).not.toHaveBeenCalled()
 
     closeActiveBridge()
     runBannerCleanup()
@@ -162,7 +158,6 @@ describe('handleFirebasePopup legacy flow', () => {
     await staleFlow
 
     expect(h.injectSession).not.toHaveBeenCalled()
-    expect(h.bindSignedInUser).not.toHaveBeenCalled()
     expect(h.restoreParentWindow).not.toHaveBeenCalled()
     expect(contents.off).toHaveBeenCalledTimes(1)
     runBannerCleanup()
@@ -182,7 +177,7 @@ describe('handleFirebasePopup legacy flow', () => {
     closeActiveBridge()
 
     await expect(staleFlow).resolves.toBeUndefined()
-    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.signInFailed).not.toHaveBeenCalled()
   })
 
   it('settles during server startup and closes the handle if startup finishes later', async () => {
@@ -221,16 +216,9 @@ describe('handleFirebasePopup legacy flow', () => {
 
     await handleFirebasePopup(AUTH_URL, fakeContents(), { onError })
 
-    expect(h.emit).toHaveBeenCalledWith('comfy.desktop.auth.sign_in_failed', {
-      provider: 'google.com',
-      error_class: 'unknown',
-      error_bucket: 'other',
-      flow: 'loopback_bridge'
-    })
     expect(onError).toHaveBeenCalledWith({
       provider: 'google.com',
-      error_class: 'unknown',
-      error_bucket: 'other',
+      error_class: 'Error',
       flow: 'loopback_bridge'
     })
   })
@@ -247,10 +235,10 @@ describe('handleFirebasePopup legacy flow', () => {
     await vi.runAllTimersAsync()
 
     await expect(flow).resolves.toBeUndefined()
-    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.signInFailed).not.toHaveBeenCalled()
   })
 
-  it('binds the verified user only after the legacy session injection succeeds', async () => {
+  it('restores the parent window only after the legacy session injection succeeds', async () => {
     const contents = fakeContents()
     const user = { uid: 'user-1', email: 'user@example.com' }
     h.startBridgeServer.mockResolvedValue({
@@ -263,14 +251,14 @@ describe('handleFirebasePopup legacy flow', () => {
     await vi.runAllTimersAsync()
     await flow
 
-    expect(h.bindSignedInUser).toHaveBeenCalledWith(user, contents)
-    expect(h.bindSignedInUser.mock.invocationCallOrder[0]).toBeGreaterThan(
+    expect(h.injectSession).toHaveBeenCalledOnce()
+    expect(h.restoreParentWindow).toHaveBeenCalledOnce()
+    expect(h.restoreParentWindow.mock.invocationCallOrder[0]).toBeGreaterThan(
       h.injectSession.mock.invocationCallOrder[0]!
     )
-    expect(h.restoreParentWindow).toHaveBeenCalledOnce()
   })
 
-  it('does not bind when legacy session injection fails', async () => {
+  it('does not restore the parent window when legacy session injection fails', async () => {
     const contents = fakeContents()
     h.injectSession.mockResolvedValueOnce(false)
     h.startBridgeServer.mockResolvedValue({
@@ -284,7 +272,6 @@ describe('handleFirebasePopup legacy flow', () => {
     await flow
 
     expect(h.injectSession).toHaveBeenCalledOnce()
-    expect(h.bindSignedInUser).not.toHaveBeenCalled()
     expect(h.restoreParentWindow).not.toHaveBeenCalled()
   })
 })

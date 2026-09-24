@@ -793,7 +793,7 @@ export async function handleAction(
         try {
           // Commit a staged import to history ONLY once the restore fully
           // succeeded — the install has actually been in this state (#1137).
-          await snapshots.importSnapshots(installation.installPath, stagedEnvelope, installation.id)
+          await snapshots.importSnapshots(installation.installPath, stagedEnvelope)
         } catch (err) {
           console.warn('Committing imported snapshots failed:', err)
           await ensureLiveStateOnTop()

@@ -63,7 +63,7 @@ test.beforeAll(async () => {
   await mkdir(path.join(installPathB, 'ComfyUI'), { recursive: true })
 
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
     installations: [
       {
         id: INSTALL_ID_A,

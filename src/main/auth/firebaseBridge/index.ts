@@ -11,8 +11,7 @@ import {
 } from './flowState'
 import { abortable, abortableSleep } from './flowControl'
 import {
-  bindSignedInUser,
-  emitSignInFailure,
+  describeSignInFailure,
   type HandleFirebasePopupOpts,
   isOnOrigin,
   originOf,
@@ -27,12 +26,11 @@ import { extractProviderId, type SupportedProvider } from './intercept'
 import { restoreParentWindow } from './restoreParentWindow'
 import { startBridgeServer, type BridgeHandle } from './server'
 import { signInViaDesktopLoginCode } from '../desktopLoginCode'
-import * as mainTelemetry from '../../lib/telemetry'
 
 const LEGACY_AUTH_FLOW = 'loopback_bridge'
 
 export { extractProviderId, isFirebaseAuthHandlerUrl } from './intercept'
-export { bindSignedInUser, POST_SIGNIN_HOLD_MS } from './flowShared'
+export { POST_SIGNIN_HOLD_MS } from './flowShared'
 export type { HandleFirebasePopupOpts, SignInFailureContext } from './flowShared'
 export { closeActiveBridge, runBannerCleanup, showCopyLinkBanner } from './flowState'
 
@@ -46,7 +44,7 @@ export { closeActiveBridge, runBannerCleanup, showCopyLinkBanner } from './flowS
  * converge on the same IndexedDB user injection and parent-window restore.
  *
  * Errors are reported via the optional `onError` callback (the caller
- * forwards them to Datadog without taking down the embedded view).
+ * logs them without taking down the embedded view).
  * Once either path opens the browser, errors are surfaced instead of starting
  * a competing sign-in mechanism underneath the active tab.
  */
@@ -74,17 +72,10 @@ export async function handleFirebasePopup(
   const providerId = extractProviderId(url)
   if (!providerId) {
     const error = new Error(`Firebase popup URL missing providerId: ${url}`)
-    const failure = emitSignInFailure('cloud', LEGACY_AUTH_FLOW, error)
+    const failure = describeSignInFailure('cloud', LEGACY_AUTH_FLOW, error)
     opts.onError?.(failure)
     return
   }
-  // Sign-in funnel: started -> (app:user_logged_in | auth.sign_in_failed).
-  // `provider` splits Google vs GitHub conversion + failure rates. The
-  // success leg is emitted by bindSignedInUser's app:user_logged_in.
-  mainTelemetry.capture('comfy.desktop.auth.sign_in_started', {
-    provider: providerId,
-    flow: LEGACY_AUTH_FLOW
-  })
   const env = detectFirebaseEnv(url)
 
   // Kill any stale bridge from a prior sign-in attempt the user didn't
@@ -149,21 +140,12 @@ export async function handleFirebasePopup(
     )
     if (!injected) return
     if (signal.aborted || !isActiveBridgeFlow(flow)) return
-    // Do not report success until the session is installed in the initiating
-    // view. The bind holds this user as pending through the post-injection
-    // reload; the consensus layer identifies once a document re-reports it.
-    bindSignedInUser(user, comfyContents)
     // Pull the user back into the app after the browser completes sign-in.
     restoreParentWindow(opts.parentWindow)
   } catch (err) {
     if (signal.aborted || !isActiveBridgeFlow(flow)) return
     const error = err instanceof Error ? err : new Error(String(err))
-    // Mirrored to Datadog (allow-list) so ops can alert if sign-in
-    // breaks for a provider. error_bucket keeps the dashboard low-
-    // cardinality; error_class adds a locale-independent type for grouping.
-    // The raw message stays out by design (may carry tokens / URLs), so we
-    // deliberately do NOT ship `error_message` / `error_signature` here.
-    const failure = emitSignInFailure(providerId, LEGACY_AUTH_FLOW, error)
+    const failure = describeSignInFailure(providerId, LEGACY_AUTH_FLOW, error)
     opts.onError?.(failure)
   } finally {
     handle?.close()

@@ -39,8 +39,6 @@ import { _broadcastToRenderer } from './shared'
 import { hasGitDir } from '../git'
 import { parseUrl } from '../util'
 import { restoreSnapshotIntoInstallation } from '../standaloneMigration'
-import * as mainTelemetry from '../telemetry'
-import { buildErrorFields } from '../../../shared/errorEvent'
 import { appendLog } from '../logsBroadcast'
 import { invalidateModelDownloadStartupPass } from '../comfyDownloadManager'
 import {
@@ -198,10 +196,8 @@ export function registerInstallationHandlers(): void {
     return uniqueName(baseName)
   })
 
-  // Cohort summary for telemetry global context. Reads from the same
-  // `installations.list()` source as `get-installations`; values are
-  // coarse counters / booleans only (no IDs, paths, or names) so the
-  // payload is safe to register as PostHog / Datadog cohort properties.
+  // Coarse install summary. Reads from the same `installations.list()`
+  // source as `get-installations`; counters / booleans only.
   //
   // `localCount` excludes the always-seeded Comfy Cloud entry (re-seeded
   // every boot via `installations.ensureExists('cloud', …)`), which would
@@ -273,7 +269,7 @@ export function registerInstallationHandlers(): void {
     return { ok: true, entry }
   })
 
-  ipcMain.handle('install-instance', async (_event, installationId: string, express?: boolean) => {
+  ipcMain.handle('install-instance', async (_event, installationId: string) => {
     const inst = await installations.get(installationId)
     if (!inst) return { ok: false, message: 'Installation not found.' }
     const source = sourceMap[inst.sourceId]
@@ -289,27 +285,7 @@ export function registerInstallationHandlers(): void {
       }
     }
 
-    // Capture the prior comfyVersion BEFORE the install runs so we can fire
-    // comfy.desktop.comfyui.update.applied at the end. An install on a record that
-    // already has a comfyVersion is a *version update*, not a fresh install
-    // (per 04 cross-cutting Add #5). Fresh installs have no prior version
-    // populated; this handler runs the same source.install() for both, so
-    // pre-vs-post comfyVersion is the cleanest signal.
-    const priorComfyVersion = inst.comfyVersion as ComfyVersion | undefined
-    const isComfyUpdate = priorComfyVersion != null
-
     if (source.install) {
-      // Durable per-person activation milestone (#1224). `$set_once` keeps the
-      // earliest FRESH local-install dispatch on the person profile, so the
-      // funnel can tell whether a user who onboarded ever actually started an
-      // install — regardless of the session it happened in. Gated on
-      // `!isComfyUpdate` so a post-release version update (which reuses this
-      // handler) can't masquerade as a first install for a returning user.
-      if (!isComfyUpdate) {
-        mainTelemetry.registerPersonPropertiesOnce({
-          first_local_install_dispatched_at: new Date().toISOString()
-        })
-      }
       fs.mkdirSync(inst.installPath, { recursive: true })
       fs.writeFileSync(path.join(inst.installPath, MARKER_FILE), installationId)
       if (source.installSteps) {
@@ -418,14 +394,6 @@ export function registerInstallationHandlers(): void {
         // Same for a build install's background model staging.
         abortModelStaging(installationId)
         if (abort.signal.aborted) {
-          if (isComfyUpdate) {
-            mainTelemetry.emit('comfy.desktop.comfyui.update.applied', {
-              installation_id: installationId,
-              from_version: formatComfyVersion(priorComfyVersion, 'short'),
-              to_version: null,
-              result: 'cancelled'
-            })
-          }
           let cleaned = !fs.existsSync(inst.installPath)
           if (!cleaned) {
             try {
@@ -474,44 +442,11 @@ export function registerInstallationHandlers(): void {
           return { ok: true, navigate: 'list' }
         }
         await installations.update(installationId, { status: 'failed' })
-        if (isComfyUpdate) {
-          mainTelemetry.emit('comfy.desktop.comfyui.update.applied', {
-            installation_id: installationId,
-            from_version: formatComfyVersion(priorComfyVersion, 'short'),
-            to_version: null,
-            result: 'error',
-            ...buildErrorFields(err)
-          })
-        }
         return { ok: false, message: (err as Error).message }
       }
       _operationAborts.delete(installationId)
       await installations.update(installationId, { status: 'installed' })
       await syncOemSeedBestEffort()
-      if (isComfyUpdate) {
-        const freshInst = await installations.get(installationId)
-        const newComfyVersion = freshInst?.comfyVersion as ComfyVersion | undefined
-        mainTelemetry.emit('comfy.desktop.comfyui.update.applied', {
-          installation_id: installationId,
-          from_version: formatComfyVersion(priorComfyVersion, 'short'),
-          to_version: newComfyVersion ? formatComfyVersion(newComfyVersion, 'short') : null,
-          result: 'success'
-        })
-      } else {
-        // Fresh standalone install finished (NOT a version update — an install
-        // on a record that already had a comfyVersion is a re-install/update,
-        // handled above). Fire the once-per-install funnel event at the moment
-        // the install is ready to boot. Distinct from comfyui.boot_started,
-        // which fires on every launch. `express` labels the one-click path;
-        // the manual Configure-wizard path passes no flag → 'manual'.
-        // Best-effort: capture() swallows its own errors, so this can never
-        // abort the install.
-        mainTelemetry.captureInstallCompleted({
-          installationId,
-          method: express ? 'express' : 'manual',
-          express: !!express
-        })
-      }
       if (snapshotRestoreError) {
         // The install itself succeeded (status 'installed' above) — report the
         // snapshot failure so the progress UI shows it.

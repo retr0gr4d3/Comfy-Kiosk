@@ -151,7 +151,7 @@ test.beforeAll(async () => {
   gitIn(stagedNodeDir, ['checkout', '--quiet', nodeCommitB])
 
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
     installations: [
       {
         id: INSTALL_ID,

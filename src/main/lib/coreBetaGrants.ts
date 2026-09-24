@@ -1,5 +1,6 @@
 /**
- * PostHog-controlled Core beta grants selected for each launch.
+ * Operator-controlled Core beta grants selected for each launch, read from the local
+ * `ops-flags.json` (see `opsFlag.ts`).
  * Payload entries name allowlisted dashed args and either a strict Core version window or a set
  * of commit ranges; launch code applies eligible grants only when beta features are enabled.
  *
@@ -10,12 +11,12 @@
  */
 import semver from 'semver'
 import { makeOpsFlag } from './opsFlag'
-import type { FeatureFlagValue } from './telemetry'
+import type { FeatureFlagValue } from './opsFlag'
 
 export const CORE_BETA_FEATURES_FLAG_KEY = 'desktop_core_beta_features'
 
 /**
- * The args a PostHog payload may GRANT. That is this list's only job — it is not a registry of
+ * The args an ops-flag payload may GRANT. That is this list's only job — it is not a registry of
  * grant-owned tokens, and membership says nothing about whether a user may pass the same arg
  * by hand (they may, and it wins; see `selectCoreBetaGrantArgs`).
  *
@@ -99,7 +100,7 @@ const MAX_DESCRIPTION_LENGTH = 48
  *  much as anything else; a name that fails it falls back to the generic wording. */
 const PRINTABLE_DESCRIPTION = /^[^\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}\p{Zl}\p{Zp}]+$/u
 
-// Prevent a control payload copied between PostHog variants from enrolling users.
+// Prevent a control payload copied between flag variants from enrolling users.
 const OFF_VARIANTS = new Set(['control', 'off', 'false', 'disabled'])
 
 function isEnabled(value: FeatureFlagValue | undefined): boolean {
@@ -489,22 +490,11 @@ function versionShortfall(
   return null
 }
 
-// Grants persist across launches, so revoking one is an ops SEQUENCE, not a deletion: serving
-// `false` on this key is what takes a grant back. Deleting or archiving the key instead reads as
-// `unreachable` — indistinguishable from an offline launch — and HOLDS every grant already on
-// disk. Disable first, let clients pick it up, delete only afterwards.
-//
-// Unchanged by late-result persistence, which only moves WHEN a disable lands, never whether a
-// deletion counts as one. What it buys is convergence: a client whose `/flags` POST reliably
-// outruns the boot deadline used to lose the revocation on every launch and hold the grant
-// forever. It now persists the late `false` and picks it up on the next launch, so expect a
-// retraction to take one extra restart rather than never arriving.
 const flag = makeOpsFlag<CoreBetaGrant[]>({
   key: CORE_BETA_FEATURES_FLAG_KEY,
   fallback: [],
   parse: parseCoreBetaGrants,
-  logLabel: 'core-beta',
-  persist: true
+  logLabel: 'core-beta'
 })
 
 export const initCoreBetaGrants = flag.init

@@ -60,17 +60,6 @@ async function fsyncDirBestEffortAsync(dirPath: string): Promise<void> {
   } catch {}
 }
 
-/** Times a read fell back to `.bak` content (primary missing, empty, or locked
- *  past the retry budget - the counter does not distinguish which). Exposed so
- *  telemetry can flag machines whose settings reads are being served from the
- *  backup - the environment behind the Desktop update reinstall loop
- *  (issue #1367). */
-let _bakFallbacks = 0
-
-export function getSafeFileDiagnostics(): { bakFallbacks: number } {
-  return { bakFallbacks: _bakFallbacks }
-}
-
 /** Outcome of a single-file read with transient-lock retries.
  *  - `data`: file read fine and was non-empty. `primaryUnreadable` is set when
  *    the content came from `.bak` because the primary EXISTS but could not be
@@ -219,7 +208,6 @@ function resolveBakFallback(
   bak: SafeReadOutcome
 ): { outcome: SafeReadOutcome; restoreBak: boolean } {
   if (bak.kind === 'data') {
-    _bakFallbacks++
     return {
       outcome: primary.kind === 'unreadable' ? { ...bak, primaryUnreadable: true } : bak,
       restoreBak: primary.kind === 'absent'

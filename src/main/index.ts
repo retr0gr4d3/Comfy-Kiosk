@@ -74,8 +74,6 @@ import {
 import { isTerminal as isTemplateDownloadTerminal } from './sources/standalone/templateDownloadCore'
 import { registerAssetDownloadHandlers } from './lib/ipc/registerAssetDownloadHandlers'
 import { registerDownloadHandlers } from './lib/ipc/registerDownloadHandlers'
-import { emitInstanceStartedTelemetry } from './lib/ipc/sessionStartTelemetry'
-import { emitStorageTelemetry } from './lib/ipc/storageTelemetry'
 import {
   get as getInstallation,
   installationEvents,
@@ -102,23 +100,9 @@ import { getSnapshotListData } from './lib/snapshots'
 import { update as updateInstallation, resolveAutoLaunchInstall } from './installations'
 import { AUTO_LAUNCH_NONE } from './settings'
 import { lookupInstallUpdateOverride, recordIpcInvocation } from './lib/e2eOverrides'
-import * as mainTelemetry from './lib/telemetry'
-import {
-  clearLegacyIdentityRetryMarker,
-  consumeFirstLaunch,
-  getDeviceId,
-  getIdClass,
-  hasCompletedFirstLaunch,
-  hasPersistedDeviceId,
-  initDeviceId,
-  markIdentityMigrationCompleted
-} from './lib/deviceId'
-import { getInitialAnonymousDistinctId } from './lib/websiteAnonymousIdentity'
-import { recoverPendingIdentityRotation } from './lib/pendingIdentityMerge'
-import { initExperiments } from './lib/experiments'
 import { initCloudFreeRuns } from './lib/cloudFreeRuns'
 import { initCoreBetaGrants } from './lib/coreBetaGrants'
-import { initStaffFlagTargeting } from './lib/staffFlagTargeting'
+import { initMcpSidebarFlag } from './lib/mcpSidebarFlag'
 import { initUserTier } from './lib/userTier'
 
 import {
@@ -148,8 +132,7 @@ import {
   rebuildComfyViewIfNeeded,
   setHostWindowFactories
 } from './host/createHostWindow'
-import { attachInstall, setAttachFactories, type ZoomResetSource } from './host/attach'
-import { resetCanvasRendered } from './lib/canvasEntry'
+import { attachInstall, setAttachFactories } from './host/attach'
 import { IN_PLACE_RELAUNCH, REQUIRES_STOPPED } from '../types/ipc'
 import { dispatchSessionAction, handleLaunch } from './lib/ipc/sessionActions'
 import { applyAttachHostPreview, clearAttachHostPreview } from './host/attachHostPreview'
@@ -397,7 +380,7 @@ const comfyReloads = new Map<string, () => void>()
 /** comfyView zoom reset (→ 100%) per installation. Registered by
  *  `attachInstall`; reached by the title-bar zoom pill's IPC handler and
  *  the title menu's "Reset Zoom" entry (`source` distinguishes them). */
-const comfyZoomResets = new Map<string, (source: ZoomResetSource) => void>()
+const comfyZoomResets = new Map<string, () => void>()
 /** Counter for generating unique relaunch tokens. */
 let relaunchTokenCounter = 0
 /** Per-install token guarding the async splash-then-reveal in the `onLaunch`
@@ -554,12 +537,6 @@ function onLaunch({
     return
   }
 
-  // Re-arm the per-launch canvas-rendered dedup so this launch's first
-  // dom-ready re-fires `canvas_rendered` (the guard otherwise suppresses it
-  // after the first paint of a prior launch on the same id). Fires for every
-  // window path below (reused, claimed, fresh).
-  resetCanvasRendered(installationId)
-
   // Re-launch into an existing window: a previous launch left the comfy
   // window alive (stop / crash leaves the window open with the lifecycle
   // body). Reuse the existing views; just point the comfyView at the new URL
@@ -682,7 +659,7 @@ function onLaunch({
         scheduleTemplateTrayAutoOpen(installationId)
         return
       }
-      // Attach failed (telemetry-only — every current call site
+      // Attach failed (defensive — every current call site
       // already gates with `isChooserHost(entry)` but the boolean
       // return keeps us from blowing up if a future caller forgets).
       // Fall through to the fresh-window path below so the user still
@@ -936,7 +913,7 @@ ipcMain.on('comfy-window:reset-zoom', (event) => {
   if (entry.window.isDestroyed()) return
   const id = entry.installationId
   if (id === null) return
-  comfyZoomResets.get(id)?.('titlebar')
+  comfyZoomResets.get(id)?.()
   focusActiveBody(entry)
 })
 
@@ -1052,17 +1029,10 @@ function _broadcastDownloadsToTitleBars(): void {
 }
 
 /**
- * Forward a Send Feedback request to the host's panel renderer.
- * Panel-side (`PanelApp.vue`) fires the `comfy.desktop.feedback.opened`
- * telemetry action and opens the typeform support URL via
- * `openExternal`. The renderer is the natural home because
- * `buildSupportUrl()` reads `navigator.userAgent` and the telemetry
- * helpers live renderer-side. Used by both the file-menu "Send
- * Feedback" entry and the title-bar feedback button.
- *
- * `source` is forwarded into the renderer's telemetry context as
- * `comfy.desktop.feedback.opened` `{ source }` so we can tell which
- * affordance the user reached for.
+ * Forward a Send Feedback request to the host's panel renderer, which opens
+ * the in-app feedback modal. The renderer is the natural home because
+ * `buildSupportUrl()` reads `navigator.userAgent`. Used by both the
+ * file-menu "Send Feedback" entry and the title-bar feedback button.
  *
  * In Comfy instance windows the panelView is constructed lazily on
  * the first non-comfy switch (Settings / Directories / lifecycle), so
@@ -1072,15 +1042,14 @@ function _broadcastDownloadsToTitleBars(): void {
  * for the current body mode and defer the send until
  * `did-finish-load` if the bundle is still loading.
  */
-function triggerOpenFeedback(entryId: number, source: 'titlebar' | 'menu'): void {
+function triggerOpenFeedback(entryId: number): void {
   const parentEntry = comfyWindows.get(entryId)
   if (!parentEntry || parentEntry.window.isDestroyed()) return
   // Flip into the 'feedback' overlay panel. setActivePanel lazily ensures the
   // panel view, makes it visible over comfyView, and broadcasts `panel-switch`.
-  // The IPC below carries the click `source` for telemetry (titlebar vs. menu).
   const panelView = parentEntry.panelView ?? ensurePanelView(entryId, parentEntry, 'feedback')
   setActivePanel(entryId, 'feedback')
-  sendToPanelDeferred(panelView, 'comfy-panel:open-feedback', { source })
+  sendToPanelDeferred(panelView, 'comfy-panel:open-feedback', {})
 }
 
 /** Title-bar Send Feedback button click. Resolves the host entry from
@@ -1088,7 +1057,7 @@ function triggerOpenFeedback(entryId: number, source: 'titlebar' | 'menu'): void
 ipcMain.on('comfy-window:click-feedback', (event) => {
   const found = findEntryByTitleBarSender(event.sender)
   if (!found) return
-  triggerOpenFeedback(found.entry.windowKey, 'titlebar')
+  triggerOpenFeedback(found.entry.windowKey)
 })
 
 /** Flip into the 'announcement' overlay panel (mirrors triggerOpenFeedback):
@@ -1443,117 +1412,19 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
       })
     }
 
-    // Bring up main-process telemetry as early as possible so install/migrate
-    // sub-step events can fire even before the renderer mounts.
-    //
-    // Three-state consent: `undefined` means "user has not chosen yet"
-    // (fresh install OR a Desktop-1 migrator whose `telemetryEnabled` was
-    // never written). Mirrors the renderer's pre-consent gate so nothing
-    // ships before the user makes a deliberate choice.
-    const telemetrySetting = settings.get('telemetryEnabled') as boolean | undefined
-    const initialConsent: mainTelemetry.ConsentState =
-      telemetrySetting === true ? 'granted' : telemetrySetting === false ? 'denied' : 'undecided'
-    // initTelemetry first so the client exists before setConsentState's
-    // grant-transition flush has a chance to run.
-    mainTelemetry.initTelemetry({
-      appVersion: APP_VERSION,
-      appEnv: app.isPackaged ? 'prod-v2' : 'dev',
-      isPackaged: app.isPackaged
-    })
-    mainTelemetry.setConsentState(initialConsent)
-    mainTelemetry.installAppHooks()
+    // Local ops flags (see `opsFlag.ts`): resolved from `ops-flags.json`, never fetched.
+    void initCloudFreeRuns()
+    void initCoreBetaGrants()
+    void initMcpSidebarFlag()
 
-    // installation_id is an event/person property, never a PostHog identity.
-    const existingInstallation = hasCompletedFirstLaunch() || hasPersistedDeviceId()
-    const { legacyId } = await initDeviceId()
-    clearLegacyIdentityRetryMarker()
-    const installationId = getDeviceId()
-    const anonymousDistinctId = recoverPendingIdentityRotation(
-      getInitialAnonymousDistinctId(existingInstallation)
-    )
-
-    mainTelemetry.bindAnonymousId(anonymousDistinctId, installationId, {
-      app_version: APP_VERSION,
-      platform: process.platform,
-      arch: process.arch,
-      id_class: getIdClass()
-    })
-
-    // Durable snapshot of the tracked global settings as person properties
-    // (issues #1220/#1223), so adoption of every setting is queryable across the
-    // whole base. Consent-gated: queued until granted. Re-registered on change in
-    // `applySettingSet`.
-    mainTelemetry.registerPersonProperties(settings.getTrackedSettingsTelemetryProperties())
-
-    const isFirstLaunch = consumeFirstLaunch()
-    if (legacyId) {
-      // Historical random installation ids are reconciled directly in
-      // PostHog, not by Desktop alias writes. Complete only the local migration.
-      markIdentityMigrationCompleted()
-    }
-
-    // Boot the experiments cache. Synchronously loads the on-disk flag
-    // values for `getFlag()`, then kicks off a background refresh whose
-    // result lands on disk for the NEXT boot. Does not block boot.
-    void initExperiments({
-      distinctId: installationId,
-      personProperties: {
-        platform: process.platform,
-        arch: process.arch,
-        app_version: APP_VERSION,
-        id_class: getIdClass()
-      }
-    })
-
-    // Bind the stored staff classification BEFORE any ops flag is fetched. The
-    // boot evaluation is the only authoritative one, so a property that arrives
-    // after it cannot affect this launch — see `staffFlagTargeting.ts`. Also
-    // subscribes to the identity consensus, which is what reclassifies for the
-    // NEXT launch; this runs before any view exists, so no outcome is missed.
-    initStaffFlagTargeting()
-
-    // This ops-flag path is separate from consent-gated experiments: the first-use
-    // picker renders while consent is still `'undecided'`, so the
-    // experiments cache would never have a value to give it. See
-    // `cloudFreeRuns.ts`.
-    void initCloudFreeRuns({ distinctId: installationId })
-
-    void initCoreBetaGrants({ distinctId: installationId })
-
-    // Hydrate the persisted cloud user-tier cache for billing telemetry and
-    // free-tier offer UI. `userTier.ts` refreshes it on every cloud
+    // Hydrate the persisted cloud user-tier cache for the free-tier offer UI.
+    // `userTier.ts` refreshes it on every cloud
     // webContents `dom-ready` (see `attach.ts`).
     void initUserTier()
 
     const locale = (settings.get('language') as string | undefined) || app.getLocale().split('-')[0]
     i18n.init(locale)
 
-    // Locale adoption + unsupported-locale demand. `effective_language` is read
-    // after i18n.init so it's the locale the app actually renders (falls back to
-    // 'en' when no bundle exists), distinct from the OS locale and the user's
-    // pick. Not a global setting, but the only place the effective locale is known.
-    mainTelemetry.capture('comfy.desktop.app.language_resolved', {
-      os_locale: app.getLocale(),
-      selected_language: (settings.get('language') as string | undefined) || null,
-      effective_language: i18n.getLocale()
-    })
-
-    // Desktop-side anchor of the website → download → first-launch acquisition
-    // funnel. Fires exactly once per installation, ever (guard file alongside
-    // device-id.txt). app_version / app_channel / platform / arch ride in as
-    // default event properties; id_class + locale are added here.
-    //
-    // `captureFirstLaunch` (not plain `capture`) because this fires on a fresh
-    // install, when consent is still `'undecided'` — a plain capture would be
-    // dropped on the consent gate while the once-ever guard stays burned,
-    // losing the event forever. The deferred path ships it on the first
-    // `undecided → granted` transition and never on a decline.
-    if (isFirstLaunch) {
-      mainTelemetry.captureFirstLaunch({
-        id_class: getIdClass(),
-        locale
-      })
-    }
     registerTitleTooltipIpc({
       findParentByTitleBarSender: (wc) => findEntryByTitleBarSender(wc)?.entry.window ?? null
     })
@@ -1626,10 +1497,6 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
           })
           return
         }
-        mainTelemetry.emit('comfy.desktop.instance.opened_new_window', {
-          to_installation_id: installationId,
-          method: 'picker'
-        })
         deliverPickToEntry(target, installationId)
       } catch (err) {
         console.error('openInstallInNewWindow failed:', err)
@@ -1711,14 +1578,6 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
             return
           }
         }
-        // Multi-instance validation signal. Fired once per picker swap
-        // (with or without a confirm); other paths (fresh chooser pick,
-        // new-window launch) are NOT swaps.
-        mainTelemetry.emit('comfy.desktop.instance.switched', {
-          from_installation_id: parentEntry.installationId,
-          to_installation_id: installationId,
-          method: 'picker'
-        })
         // `entry.detachInstall()` runs the full symmetric undo of
         // `attachInstall`: stops the running session, releases the
         // comfyView URL, re-navigates the title-bar back to chooser
@@ -1743,7 +1602,7 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
       confirmAndCloseHostWindow,
       setActivePanel,
       triggerOpenFeedback,
-      resetComfyZoom: (installationId) => comfyZoomResets.get(installationId)?.('menu'),
+      resetComfyZoom: (installationId) => comfyZoomResets.get(installationId)?.(),
       sendToPanelDeferred,
       ensurePanelViewForEntry: (entry) =>
         entry.panelView ?? ensurePanelView(entry.windowKey, entry, computeBodyMode(entry)),
@@ -1791,34 +1650,6 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
             return
           }
 
-          // Picker-initiated multi-instance op telemetry. The picker runs
-          // ops inline (PickerInlineProgress) rather than handing off to the
-          // panel ProgressModal, so neither `action.invoked` nor `op.result`
-          // fires from the renderer for this path. Emit both here, tagged
-          // `source: 'picker'`, symmetric with the panel path (which emits
-          // action.invoked from the drawer + op.result from progressStore).
-          const opStartMs = Date.now()
-          mainTelemetry.capture('comfy.desktop.action.invoked', {
-            action_id: actionId,
-            installation_id: installationId,
-            source: 'picker'
-          })
-          const emitPickerOpResult = (
-            opResult: 'success' | 'failed' | 'cancelled_user',
-            errorMessage?: string | null
-          ): void => {
-            mainTelemetry.emit('comfy.desktop.op.result', {
-              installation_id: installationId,
-              action_id: actionId,
-              source: 'picker',
-              result: opResult,
-              duration_ms: Date.now() - opStartMs,
-              ...(opResult === 'failed' && errorMessage
-                ? { error_bucket: mainTelemetry.bucketError(errorMessage) }
-                : {})
-            })
-          }
-
           // Stop the session if needed (REQUIRES_STOPPED).
           const wasRunning = _runningSessions.has(installationId)
           if (REQUIRES_STOPPED.has(actionId) && wasRunning) {
@@ -1849,7 +1680,6 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
                 actionData
               })
               triggerPickerSnapshotBroadcast()
-              emitPickerOpResult('failed', (err as Error).message ?? 'Stop failed.')
               return
             }
           }
@@ -1944,13 +1774,6 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
               actionId,
               actionData
             }
-            if (wasCancelled) {
-              emitPickerOpResult('cancelled_user')
-            } else if (actionResult.ok !== false) {
-              emitPickerOpResult('success')
-            } else {
-              emitPickerOpResult('failed', actionResult.message ?? 'Failed.')
-            }
           } catch (err) {
             const abort = _operationAborts.get(installationId)
             result = {
@@ -1963,11 +1786,6 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
               title,
               actionId,
               actionData
-            }
-            if (abort?.signal.aborted) {
-              emitPickerOpResult('cancelled_user')
-            } else {
-              emitPickerOpResult('failed', (err as Error).message ?? 'Failed.')
             }
           }
           _activeOperationStatus.set(installationId, result)
@@ -2199,10 +2017,6 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
       onLaunch,
       onStop,
       onComfyExited,
-      onInstanceStarted: (info) => {
-        void emitInstanceStartedTelemetry(info)
-        void emitStorageTelemetry(info.installationId)
-      },
       onComfyRestarted,
       onModelFolderRelaunch,
       onLocaleChanged: updateTrayMenu,
@@ -2296,7 +2110,6 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
         if (updateInstallQuitStarted) return
         app.removeListener('before-quit', onUpdateInstallQuit)
         clearQuitReason()
-        updater.recordStartupInstallBackstopRecovered()
         void openSurfaceAndDismissSplash().then(() => {
           hostReentryGate.open()
         })
@@ -2418,7 +2231,6 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
         tray = null
       }
     }
-    updater.recordProcessExit()
     if (_stopPeriodicReleaseChecks) {
       _stopPeriodicReleaseChecks()
       _stopPeriodicReleaseChecks = null

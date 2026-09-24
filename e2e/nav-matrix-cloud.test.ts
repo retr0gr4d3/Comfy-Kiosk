@@ -47,7 +47,7 @@ async function openCloudInNewWindow(): Promise<void> {
 
 test.beforeAll(async () => {
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
     installations: [
       { id: CLOUD_ID, name: CLOUD_NAME, sourceId: 'cloud', status: 'installed' },
     ],

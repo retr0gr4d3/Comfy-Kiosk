@@ -3,10 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 
-vi.mock('../lib/telemetry', () => ({
-  emitTelemetryAction: vi.fn()
-}))
-
 vi.mock('../components/TakeoverHeader.vue', () => ({
   default: { template: '<div data-testid="stub-takeover-header"><slot /></div>' }
 }))
@@ -64,7 +60,6 @@ vi.mock('../components/BrandTakeoverLayout.vue', () => ({
 }))
 
 import FirstUseTakeover from './FirstUseTakeover.vue'
-import { emitTelemetryAction } from '../lib/telemetry'
 import type { GpuTier } from '../../../shared/gpuTier'
 
 const i18n = createI18n({
@@ -95,16 +90,13 @@ function deferred<T>() {
 }
 
 beforeEach(() => {
-  // Telemetry assertions look for a single call by event name, so calls
-  // must not leak in from the previous test.
-  vi.mocked(emitTelemetryAction).mockClear()
   window.api = {
     setSetting: vi.fn().mockResolvedValue(undefined),
     getSetting: vi.fn().mockResolvedValue(true),
     getLocale: vi.fn().mockResolvedValue('en'),
     validateHardware: vi.fn().mockResolvedValue({ supported: true }),
     // A capable GPU by default, so these baseline tests exercise the
-    // fork-experiment default in isolation from the GPU-Aware Cloud Upsell
+    // Local default in isolation from the GPU-Aware Cloud Upsell
     // override (`hardwareRecommendsCloud`), which only fires on the
     // `sub_low` / `cpu_only` tiers. Tests for that feature set a poor tier
     // explicitly per-case.
@@ -112,12 +104,7 @@ beforeEach(() => {
     getCloudFreeRunsEnabled: vi.fn().mockResolvedValue(true),
     getCloudUserTier: vi.fn().mockResolvedValue('unknown'),
     setFirstUseMode: vi.fn(),
-    closeHostWindow: vi.fn().mockResolvedValue(undefined),
-    // Default to undefined so the existing tests exercise the control
-    // branch (Local-default). Tests that need the treatment arm mutate
-    // this per-case before mounting.
-    telemetryGetExperimentFlag: vi.fn().mockResolvedValue(undefined),
-    telemetryRecordExposure: vi.fn()
+    closeHostWindow: vi.fn().mockResolvedValue(undefined)
   } as unknown as typeof window.api
 })
 
@@ -154,13 +141,6 @@ describe('FirstUseTakeover start step', () => {
     await wrapper.find('[data-testid="first-use-tos-link"]').trigger('click')
     const modal = wrapper.find('[data-testid="stub-terms-modal"]')
     expect(modal.attributes('data-doc')).toBe('tos')
-  })
-
-  it('clicking the telemetry Learn-more opens the modal with doc="privacy"', async () => {
-    const wrapper = mountTakeover()
-    await wrapper.find('[data-testid="first-use-telemetry-learn-more"]').trigger('click')
-    const modal = wrapper.find('[data-testid="stub-terms-modal"]')
-    expect(modal.attributes('data-doc')).toBe('privacy')
   })
 
   it('Cloud (i) icon is wrapped in TooltipWrap carrying the whyTryCloud copy', () => {
@@ -426,176 +406,6 @@ describe('FirstUseTakeover start step', () => {
   })
 })
 
-describe('FirstUseTakeover desktop-first-use-fork-default experiment', () => {
-  it.each([
-    ['Cloud', 'cloud' as const, undefined],
-    ['Local', 'local' as const, 'cloud']
-  ])(
-    'preserves an explicit %s choice while boot defaults are still resolving',
-    async (_label, choice, flagValue) => {
-      const freeRuns = deferred<boolean>()
-      ;(window.api.telemetryGetExperimentFlag as ReturnType<typeof vi.fn>).mockResolvedValue(
-        flagValue
-      )
-      ;(window.api.getCloudFreeRunsEnabled as ReturnType<typeof vi.fn>).mockReturnValue(
-        freeRuns.promise
-      )
-      const wrapper = mountTakeover()
-
-      await wrapper.find(`[data-testid="first-use-pick-${choice}"]`).trigger('click')
-      freeRuns.resolve(true)
-      await flushPromises()
-
-      expect(
-        wrapper.find(`[data-testid="first-use-pick-${choice}"]`).attributes('data-selected')
-      ).toBe('true')
-    }
-  )
-
-  it('keeps Local as the default when the flag is missing (control / fallback)', async () => {
-    const wrapper = mountTakeover()
-    await flushPromises()
-
-    await wrapper
-      .find('[data-testid="first-use-consent-tos"] input[type="checkbox"]')
-      .setValue(true)
-    await wrapper.find('[data-testid="first-use-continue"]').trigger('click')
-
-    // Local is the resolved default → routed to chain-local without
-    // touching the picker.
-    expect(wrapper.emitted('chain-local')).toBeTruthy()
-    expect(wrapper.emitted('complete-cloud')).toBeFalsy()
-    // Exposure fires with source='fallback' because the flag returned
-    // undefined (no cache, no recognised value).
-    expect(window.api.telemetryRecordExposure).toHaveBeenCalledWith({
-      experimentKey: 'desktop-first-use-fork-default',
-      variant: 'control',
-      source: 'fallback'
-    })
-  })
-
-  it("pre-selects Cloud when the flag returns 'cloud' (cloud-default arm) and fires exposure with source='cache'", async () => {
-    ;(window.api.telemetryGetExperimentFlag as ReturnType<typeof vi.fn>).mockResolvedValue('cloud')
-    const wrapper = mountTakeover()
-    await flushPromises()
-
-    await wrapper
-      .find('[data-testid="first-use-consent-tos"] input[type="checkbox"]')
-      .setValue(true)
-    await wrapper.find('[data-testid="first-use-continue"]').trigger('click')
-
-    // Cloud is now the resolved default → Continue without touching
-    // the picker routes to complete-cloud.
-    expect(wrapper.emitted('complete-cloud')).toBeTruthy()
-    expect(wrapper.emitted('chain-local')).toBeFalsy()
-    expect(window.api.telemetryRecordExposure).toHaveBeenCalledWith({
-      experimentKey: 'desktop-first-use-fork-default',
-      variant: 'cloud-default',
-      source: 'cache'
-    })
-  })
-
-  it("pre-selects nothing when the flag returns 'none' (no-default arm) and disables Continue until a card is picked", async () => {
-    ;(window.api.telemetryGetExperimentFlag as ReturnType<typeof vi.fn>).mockResolvedValue('none')
-    const wrapper = mountTakeover()
-    await flushPromises()
-
-    await wrapper
-      .find('[data-testid="first-use-consent-tos"] input[type="checkbox"]')
-      .setValue(true)
-
-    // Continue stays disabled even with ToS accepted — the no-default
-    // arm requires an explicit pick before commit.
-    const btn = wrapper.find('[data-testid="first-use-continue"]')
-    expect(btn.attributes('disabled')).toBeDefined()
-
-    // Clicking it does nothing — no emit fires.
-    await btn.trigger('click')
-    expect(wrapper.emitted('chain-local')).toBeFalsy()
-    expect(wrapper.emitted('complete-cloud')).toBeFalsy()
-
-    // Pick Local → Continue activates.
-    await wrapper.find('[data-testid="first-use-pick-local"]').trigger('click')
-    expect(btn.attributes('disabled')).toBeUndefined()
-    await btn.trigger('click')
-    expect(wrapper.emitted('chain-local')).toBeTruthy()
-
-    expect(window.api.telemetryRecordExposure).toHaveBeenCalledWith({
-      experimentKey: 'desktop-first-use-fork-default',
-      variant: 'no-default',
-      source: 'cache'
-    })
-  })
-
-  it("treats any other flag value ('control', unknown string, true) as control", async () => {
-    ;(window.api.telemetryGetExperimentFlag as ReturnType<typeof vi.fn>).mockResolvedValue(
-      'control'
-    )
-    const wrapper = mountTakeover()
-    await flushPromises()
-    await wrapper
-      .find('[data-testid="first-use-consent-tos"] input[type="checkbox"]')
-      .setValue(true)
-    await wrapper.find('[data-testid="first-use-continue"]').trigger('click')
-    expect(wrapper.emitted('chain-local')).toBeTruthy()
-    // 'control' is a string PostHog *might* return, so source is 'cache'
-    // not 'fallback' even though the variant is the same as no-flag.
-    expect(window.api.telemetryRecordExposure).toHaveBeenCalledWith({
-      experimentKey: 'desktop-first-use-fork-default',
-      variant: 'control',
-      source: 'cache'
-    })
-  })
-
-  it('legacy-desktop precedence forces Local even when the cloud-default variant says Cloud', async () => {
-    ;(window.api.telemetryGetExperimentFlag as ReturnType<typeof vi.fn>).mockResolvedValue('cloud')
-    const wrapper = mountTakeover()
-    await (
-      wrapper.vm as unknown as { open: (opts: { hasLegacyDesktop: boolean }) => Promise<void> }
-    ).open({ hasLegacyDesktop: true })
-    await flushPromises()
-
-    // The migrate-existing checkbox renders → user with legacy install
-    // landed on Local even though the cloud-default arm would have
-    // flipped them to Cloud. Precedence holds.
-    expect(wrapper.find('[data-testid="first-use-migrate-existing"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="first-use-express-install"]').classes()).not.toContain(
-      'start-express--hidden'
-    )
-  })
-
-  it('legacy-desktop precedence forces Local even when the no-default variant says pick-nothing', async () => {
-    // Migration flow is the whole reason legacy users exist as a
-    // cohort — we know they want their existing install brought over.
-    // Pre-selecting nothing for them would force an extra click for
-    // zero signal value, so the experiment is bypassed on this path.
-    ;(window.api.telemetryGetExperimentFlag as ReturnType<typeof vi.fn>).mockResolvedValue('none')
-    const wrapper = mountTakeover()
-    await (
-      wrapper.vm as unknown as { open: (opts: { hasLegacyDesktop: boolean }) => Promise<void> }
-    ).open({ hasLegacyDesktop: true })
-    await flushPromises()
-
-    // Continue is immediately actionable — Local is pre-selected.
-    await wrapper
-      .find('[data-testid="first-use-consent-tos"] input[type="checkbox"]')
-      .setValue(true)
-    const btn = wrapper.find('[data-testid="first-use-continue"]')
-    expect(btn.attributes('disabled')).toBeUndefined()
-
-    // Migrate-existing checkbox + Express checkbox both render —
-    // confirms the Local card is the resolved pick (not null).
-    expect(wrapper.find('[data-testid="first-use-migrate-existing"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="first-use-express-install"]').classes()).not.toContain(
-      'start-express--hidden'
-    )
-
-    await btn.trigger('click')
-    // Default opts: Migrate + Express both pre-ticked → chain-migrate.
-    expect(wrapper.emitted('chain-migrate')).toBeTruthy()
-  })
-})
-
 describe('FirstUseTakeover hardware warning', () => {
   const KFD_WARNING =
     'Your user cannot access the AMD GPU compute interface (/dev/kfd), so ComfyUI will not be able to use the GPU.'
@@ -655,8 +465,8 @@ describe('FirstUseTakeover hardware warning', () => {
 
 /**
  * GPU-Aware Cloud Upsell. The recommendation reads the shared `gpu_tier`
- * classifier (`deriveGpuTier`, via `get-system-info`) — the same signal
- * telemetry cohorts on — rather than re-deriving hardware capability here.
+ * classifier (`deriveGpuTier`, via `get-system-info`) rather than
+ * re-deriving hardware capability here.
  */
 describe('FirstUseTakeover GPU-aware Cloud recommendation', () => {
   const badge = (w: ReturnType<typeof mountTakeover>) =>
@@ -841,65 +651,6 @@ describe('FirstUseTakeover GPU-aware Cloud recommendation', () => {
   })
 })
 
-describe('FirstUseTakeover recommendation telemetry', () => {
-  async function commitWith(tier: GpuTier, pick: 'cloud' | 'local') {
-    ;(window.api.getSystemInfo as ReturnType<typeof vi.fn>).mockResolvedValue(
-      systemInfo(tier, null)
-    )
-    const wrapper = mountTakeover()
-    await flushPromises()
-    await wrapper.find(`[data-testid="first-use-pick-${pick}"]`).trigger('click')
-    await wrapper
-      .find('[data-testid="first-use-consent-tos"] input[type="checkbox"]')
-      .setValue(true)
-    await wrapper.find('[data-testid="first-use-continue"]').trigger('click')
-    await flushPromises()
-    return wrapper
-  }
-
-  function forkChosenProps() {
-    const call = vi
-      .mocked(emitTelemetryAction)
-      .mock.calls.find(([name]) => name === 'comfy.desktop.first_use.fork_chosen')
-    return call?.[1] as Record<string, unknown> | undefined
-  }
-
-  // `reco_shown` splits cloud-pick rate by whether the badge was seen —
-  // without it there's no way to tell whether the badge does anything.
-  it.each([
-    ['cpu_only' as GpuTier, 'cloud' as const, true],
-    ['high' as GpuTier, 'local' as const, false]
-  ])('tags fork_chosen on %s with reco_shown=%s', async (tier, pick, shown) => {
-    await commitWith(tier, pick)
-    expect(forkChosenProps()).toMatchObject({ choice: pick, reco_shown: shown, gpu_tier: tier })
-  })
-
-  // The recommendation cohort had its assigned arm overridden to "nothing
-  // selected", so it never experienced the arm; recording exposure would
-  // bias the readout. `reco_shown` on the outcome events covers them.
-  it.each([
-    ['cpu_only' as GpuTier, false],
-    ['high' as GpuTier, true]
-  ])('records fork-default exposure on %s: %s', async (tier, recorded) => {
-    ;(window.api.telemetryGetExperimentFlag as ReturnType<typeof vi.fn>).mockResolvedValue('cloud')
-    ;(window.api.getSystemInfo as ReturnType<typeof vi.fn>).mockResolvedValue(
-      systemInfo(tier, null)
-    )
-    mountTakeover()
-    await flushPromises()
-    const call = vi.mocked(window.api.telemetryRecordExposure).mock.calls.length > 0
-    expect(call).toBe(recorded)
-    if (recorded) {
-      expect(window.api.telemetryRecordExposure).toHaveBeenCalledWith(
-        expect.objectContaining({
-          experimentKey: 'desktop-first-use-fork-default',
-          variant: 'cloud-default'
-        })
-      )
-    }
-  })
-})
-
 describe('FirstUseTakeover beta-features opt-in', () => {
   type Wrapper = ReturnType<typeof mountTakeover>
 
@@ -911,112 +662,44 @@ describe('FirstUseTakeover beta-features opt-in', () => {
     return wrapper
   }
 
-  const betaRow = (w: Wrapper) => w.find('[data-testid="first-use-consent-beta"]')
   const betaBox = (w: Wrapper) => w.find('[data-testid="first-use-consent-beta"] input')
-  const telemetryBox = (w: Wrapper) => w.find('[data-testid="first-use-consent-telemetry"] input')
   const isChecked = (el: ReturnType<typeof betaBox>) => (el.element as HTMLInputElement).checked
 
-  it('mirrors the telemetry choice until the user touches it, then diverges', async () => {
-    const w = await openWith({ telemetryEnabled: true })
-    expect(isChecked(betaBox(w))).toBe(true)
+  async function commit(w: Wrapper): Promise<void> {
+    await w.find('[data-testid="first-use-consent-tos"] input[type="checkbox"]').setValue(true)
+    await w.find('[data-testid="first-use-pick-local"]').trigger('click')
+    await w.find('[data-testid="first-use-continue"]').trigger('click')
+    await flushPromises()
+  }
 
-    await telemetryBox(w).setValue(false)
-    expect(isChecked(betaBox(w))).toBe(false)
-    expect(betaBox(w).attributes('aria-disabled')).toBe('true')
-
-    await telemetryBox(w).setValue(true)
-    expect(isChecked(betaBox(w))).toBe(true)
-
-    await betaBox(w).setValue(false)
-    expect(isChecked(betaBox(w))).toBe(false)
-    expect(isChecked(telemetryBox(w))).toBe(true)
-  })
-
-  it('never re-enables a touched toggle when telemetry is switched back on', async () => {
-    const w = await openWith({ telemetryEnabled: true })
-    await betaBox(w).setValue(false)
-    await betaBox(w).setValue(true)
-    expect(isChecked(betaBox(w))).toBe(true)
-
-    await telemetryBox(w).setValue(false)
-    expect(isChecked(betaBox(w))).toBe(false)
-
-    await telemetryBox(w).setValue(true)
-    expect(isChecked(betaBox(w))).toBe(false)
-  })
-
-  it('replays a persisted opt-out unchanged through a telemetry off/on cycle', async () => {
-    const w = await openWith({ telemetryEnabled: true, betaFeaturesEnabled: false })
-    expect(isChecked(betaBox(w))).toBe(false)
-    expect(isChecked(telemetryBox(w))).toBe(true)
-
-    await telemetryBox(w).setValue(false)
-    expect(isChecked(betaBox(w))).toBe(false)
-
-    await telemetryBox(w).setValue(true)
+  it('starts unchecked when nothing is persisted', async () => {
+    const w = await openWith({})
     expect(isChecked(betaBox(w))).toBe(false)
   })
 
   it('replays a persisted opt-in', async () => {
-    const w = await openWith({ telemetryEnabled: true, betaFeaturesEnabled: true })
+    const w = await openWith({ betaFeaturesEnabled: true })
     expect(isChecked(betaBox(w))).toBe(true)
   })
 
-  it('preserves a persisted opt-in when telemetry is off and persists it on replay', async () => {
-    const w = await openWith({ telemetryEnabled: false, betaFeaturesEnabled: true })
-    expect(isChecked(betaBox(w))).toBe(true)
-
-    await (w.vm as unknown as { open: () => Promise<void> }).open()
-    await flushPromises()
-    expect(isChecked(betaBox(w))).toBe(true)
-
-    await w.find('[data-testid="first-use-consent-tos"] input[type="checkbox"]').setValue(true)
-    await w.find('[data-testid="first-use-pick-local"]').trigger('click')
-    await w.find('[data-testid="first-use-continue"]').trigger('click')
-    await flushPromises()
+  it('persists a new opt-in at the commit point', async () => {
+    const w = await openWith({})
+    await betaBox(w).setValue(true)
+    await commit(w)
     expect(window.api.setSetting).toHaveBeenCalledWith('betaFeaturesEnabled', true)
   })
 
-  it('allows a preserved persisted opt-in to be explicitly opted out', async () => {
-    const w = await openWith({ telemetryEnabled: false, betaFeaturesEnabled: true })
+  it('persists an explicit opt-out of a persisted opt-in', async () => {
+    const w = await openWith({ betaFeaturesEnabled: true })
     await betaBox(w).setValue(false)
-    expect(isChecked(betaBox(w))).toBe(false)
-  })
-
-  it('revokes a new unpersisted opt-in when telemetry is switched off', async () => {
-    const w = await openWith({ telemetryEnabled: true })
-    expect(isChecked(betaBox(w))).toBe(true)
-
-    await telemetryBox(w).setValue(false)
-    expect(isChecked(betaBox(w))).toBe(false)
-  })
-
-  it('keeps the checkbox focusable and blocks keyboard activation without telemetry', async () => {
-    const w = await openWith({ telemetryEnabled: false })
-    const box = betaBox(w)
-    const reasonId = box.attributes('aria-describedby')
-    expect(box.attributes('disabled')).toBeUndefined()
-    expect(box.attributes('aria-disabled')).toBe('true')
-    expect(reasonId).toBeTruthy()
-    expect(w.find(`#${reasonId}`).text()).toBe('tooltips.betaFeaturesNeedTelemetry')
-    ;(box.element as HTMLInputElement).checked = true
-    await box.trigger('change')
-    expect(isChecked(betaBox(w))).toBe(false)
-
-    await telemetryBox(w).setValue(true)
-    expect(betaBox(w).attributes('aria-disabled')).toBe('false')
-    expect(betaRow(w).attributes('title')).toBeUndefined()
-  })
-
-  it('persists both the telemetry and the beta choice at the same commit point', async () => {
-    const w = await openWith({ telemetryEnabled: true })
-    await w.find('[data-testid="first-use-consent-tos"] input[type="checkbox"]').setValue(true)
-    await w.find('[data-testid="first-use-pick-local"]').trigger('click')
-    await betaBox(w).setValue(false)
-    await w.find('[data-testid="first-use-continue"]').trigger('click')
-    await flushPromises()
-
-    expect(window.api.setSetting).toHaveBeenCalledWith('telemetryEnabled', true)
+    await commit(w)
     expect(window.api.setSetting).toHaveBeenCalledWith('betaFeaturesEnabled', false)
+  })
+
+  it('never writes a telemetry setting', async () => {
+    const w = await openWith({})
+    await commit(w)
+    const keys = vi.mocked(window.api.setSetting).mock.calls.map(([key]) => key)
+    expect(keys).not.toContain('telemetryEnabled')
   })
 })

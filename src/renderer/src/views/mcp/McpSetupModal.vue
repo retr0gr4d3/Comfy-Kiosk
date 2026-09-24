@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { ArrowUpRight, ChevronDown, ExternalLink, Terminal, X } from 'lucide-vue-next'
-import { emitTelemetryAction } from '../../lib/telemetry'
 import BaseModal from '../../components/ui/BaseModal.vue'
 import BaseCopyButton from '../../components/ui/BaseCopyButton.vue'
 import McpVideoPlayer from './McpVideoPlayer.vue'
@@ -25,16 +24,11 @@ function toggleOption(next: AgentMode): void {
     return
   }
   openOption.value = next
-  emitTelemetryAction('comfy.desktop.mcp.option_selected', { option: next })
 }
 
 const AGENT_CMD = 'pip install comfy-mcp && claude mcp add comfy-mcp -- comfy-mcp'
 const JSON_CMD = '{ "mcpServers": { "comfy-mcp": { "command": "comfy-mcp" } } }'
 const TERMINAL_CMD = `${AGENT_CMD} && claude`
-
-function trackCopy(client: string): void {
-  emitTelemetryAction('comfy.desktop.mcp.snippet_copied', { client })
-}
 
 /** `icon` is the agent's simple-icons monochrome path (24x24 viewBox). */
 const AGENTS = [
@@ -61,23 +55,19 @@ const VIDEO_SRC = MCP_LAUNCH_VIDEO_SRC
 function selectPath(next: Path): void {
   if (path.value === next) return
   path.value = next
-  emitTelemetryAction('comfy.desktop.mcp.path_selected', { path: next })
 }
 
 function openTerminal(): void {
-  emitTelemetryAction('comfy.desktop.mcp.terminal_opened', {})
   emit('openTerminal')
   emit('close')
 }
 
 function openDocs(target: string): void {
-  emitTelemetryAction('comfy.desktop.mcp.docs_opened', { target })
   if (target === 'agent_install') return
   window.api?.openPath?.(DOCS_URL)
 }
 
 function dismiss(): void {
-  emitTelemetryAction('comfy.desktop.mcp.panel_dismissed', { stage: 'panel' })
   emit('close')
 }
 </script>
@@ -158,7 +148,6 @@ function dismiss(): void {
                     :size="14"
                     aria-label="Copy connect command"
                     class="mcp-cmd__copy"
-                    @click="trackCopy('claude_code')"
                   />
                 </div>
                 <p class="mcp-alt">
@@ -168,7 +157,6 @@ function dismiss(): void {
                     :size="13"
                     aria-label="Copy the JSON config"
                     class="mcp-alt__copy"
-                    @click="trackCopy('json')"
                   />
                   <span>Copy the JSON config</span>
                 </p>
@@ -200,7 +188,6 @@ function dismiss(): void {
                   :size="14"
                   aria-label="Copy terminal command"
                   class="mcp-cmd__copy"
-                  @click="trackCopy('terminal_one_liner')"
                 />
               </div>
               <button

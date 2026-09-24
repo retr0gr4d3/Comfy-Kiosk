@@ -90,17 +90,9 @@ function makeSnapshot(overrides: Partial<Record<string, unknown>> = {}) {
         ]
       }
     ],
-    telemetryFields: [
-      {
-        id: 'telemetryEnabled',
-        label: 'Send anonymous telemetry',
-        value: true,
-        editable: true,
-        editType: 'boolean'
-      },
+    betaFields: [
       // Built main-side by `buildSettingsSections` off
-      // `resolveBetaFeaturesEnabled()`, so it always carries a real boolean —
-      // a legacy install with nothing stored arrives seeded, never blank.
+      // `resolveBetaFeaturesEnabled()`, so it always carries a real boolean.
       {
         id: 'betaFeaturesEnabled',
         label: 'Opt in to beta features',
@@ -109,8 +101,6 @@ function makeSnapshot(overrides: Partial<Record<string, unknown>> = {}) {
         editType: 'boolean'
       }
     ],
-    // Explicit telemetry consent; gates the OFF -> ON direction of the row above.
-    telemetryGranted: true,
     desktopUpdateFields: [
       {
         id: 'autoInstallUpdates',
@@ -696,22 +686,21 @@ describe('GlobalSettingsView', () => {
 
   describe('beta features opt-in row', () => {
     const BETA_LABEL = 'Opt in to beta features'
-    const TELEMETRY_LABEL = 'Send anonymous telemetry'
 
     function toggleFor(wrapper: ReturnType<typeof mountView>, label: string) {
       return wrapper.find(`button[role="switch"][aria-label="${label}"]`)
     }
 
-    function snapshotWith(granted: boolean, beta: boolean) {
-      const snap = makeSnapshot({ telemetryGranted: granted })
-      const fields = snap.telemetryFields as Record<string, unknown>[]
+    function snapshotWith(beta: boolean) {
+      const snap = makeSnapshot()
+      const fields = snap.betaFields as Record<string, unknown>[]
       fields.find((f) => f['id'] === 'betaFeaturesEnabled')!['value'] = beta
       return snap
     }
 
     it('renders the seeded value from the snapshot and persists a change through the bridge', async () => {
       const bridge = installMockBridge()
-      const wrapper = mountView(snapshotWith(true, true))
+      const wrapper = mountView(snapshotWith(true))
       const toggle = toggleFor(wrapper, BETA_LABEL)
       expect(toggle.exists()).toBe(true)
       expect(toggle.attributes('aria-checked')).toBe('true')
@@ -721,50 +710,22 @@ describe('GlobalSettingsView', () => {
       expect(bridge.updateFieldCalls).toEqual([{ id: 'betaFeaturesEnabled', value: false }])
     })
 
-    it('blocks the off -> on transition and explains why when telemetry consent is absent', async () => {
+    it('allows opting in without any prerequisite', async () => {
       const bridge = installMockBridge()
-      const wrapper = mountView(snapshotWith(false, false))
+      const wrapper = mountView(snapshotWith(false))
       const toggle = toggleFor(wrapper, BETA_LABEL)
-      expect(toggle.attributes('aria-disabled')).toBe('true')
-      expect(toggle.attributes('title')).toBe(en.tooltips.betaFeaturesNeedTelemetry)
+      expect(toggle.attributes('aria-disabled')).not.toBe('true')
+      expect(toggle.attributes('title')).toBeUndefined()
 
       await toggle.trigger('click')
       await flushPromises()
-      expect(bridge.updateFieldCalls).toEqual([])
+      expect(bridge.updateFieldCalls).toEqual([{ id: 'betaFeaturesEnabled', value: true }])
     })
 
-    it('leaves the telemetry row itself untouched when consent is absent', () => {
+    it('renders no telemetry row', () => {
       installMockBridge()
-      const wrapper = mountView(snapshotWith(false, false))
-      const toggle = toggleFor(wrapper, TELEMETRY_LABEL)
-      expect(toggle.attributes('disabled')).toBeUndefined()
-      expect(toggle.attributes('title')).toBeUndefined()
-    })
-
-    it('still allows leaving the beta programme while telemetry consent is absent, then blocks re-entry', async () => {
-      const bridge = installMockBridge()
-      const wrapper = mountView(snapshotWith(false, true))
-      const toggle = toggleFor(wrapper, BETA_LABEL)
-      expect(toggle.attributes('disabled')).toBeUndefined()
-
-      await toggle.trigger('click')
-      await flushPromises()
-      expect(bridge.updateFieldCalls).toEqual([{ id: 'betaFeaturesEnabled', value: false }])
-
-      await wrapper.setProps({ snapshot: snapshotWith(false, false) as never })
-      const after = toggleFor(wrapper, BETA_LABEL)
-      expect(after.attributes('aria-disabled')).toBe('true')
-      await after.trigger('click')
-      await flushPromises()
-      expect(bridge.updateFieldCalls).toHaveLength(1)
-    })
-
-    it('enables both directions once telemetry consent is granted', () => {
-      installMockBridge()
-      const wrapper = mountView(snapshotWith(true, false))
-      const toggle = toggleFor(wrapper, BETA_LABEL)
-      expect(toggle.attributes('disabled')).toBeUndefined()
-      expect(toggle.attributes('title')).toBeUndefined()
+      const wrapper = mountView(snapshotWith(false))
+      expect(wrapper.text().toLowerCase()).not.toContain('telemetry')
     })
   })
 })

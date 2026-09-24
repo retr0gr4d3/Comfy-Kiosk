@@ -6,7 +6,6 @@ import { TID } from '../../../../shared/testIds'
 import { MSG_CANCELLED } from '../../../../shared/operationStatus'
 import { useDialogs } from '../../composables/useDialogs'
 import { useActionGuard } from '../../composables/useActionGuard'
-import { emitTelemetryAction, toCountBucket } from '../../lib/telemetry'
 import {
   diffHasChanges,
   formatDate,
@@ -330,11 +329,6 @@ async function toggleDiff(filename: string, mode: DiffMode): Promise<void> {
   try {
     const d = await window.api.getSnapshotDiff(props.installationId, filename, mode)
     diffCache.value = new Map(diffCache.value).set(key, d)
-    emitTelemetryAction('comfy.desktop.snapshot.flow', {
-      action: 'view_diff',
-      snapshot_count_bucket: toCountBucket(snapshots.value.length),
-      has_diff: d ? diffHasChanges(d.diff) : undefined
-    })
   } finally {
     const next = new Set(diffLoading.value)
     next.delete(key)
@@ -387,10 +381,6 @@ async function handleSave(): Promise<void> {
     })
     return
   }
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'save',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length)
-  })
   expandedFilenames.value = new Set()
   await load()
   emit('refresh-all')
@@ -405,13 +395,6 @@ async function handleRestore(filename: string): Promise<void> {
   } catch {
     diff = null
   }
-  const hasChanges = diff ? diffHasChanges(diff.diff) : undefined
-
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'restore_complete',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length),
-    has_diff: hasChanges
-  })
 
   // Pass the diff-preview confirm through so `runAction` augments it with
   // the willStopRunning warning rather than synthesizing a second modal.
@@ -456,10 +439,6 @@ async function handleDelete(filename: string): Promise<void> {
     })
     return
   }
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'delete',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length)
-  })
   if (expandedFilenames.value.has(filename)) {
     const next = new Set(expandedFilenames.value)
     next.delete(filename)
@@ -473,18 +452,10 @@ async function handleDelete(filename: string): Promise<void> {
 
 async function handleExport(filename: string): Promise<void> {
   await window.api.exportSnapshot(props.installationId, filename)
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'export_one',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length)
-  })
 }
 
 async function handleExportAll(): Promise<void> {
   await window.api.exportAllSnapshots(props.installationId)
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'export_all',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length)
-  })
 }
 
 // --- Import ---
@@ -565,12 +536,6 @@ async function handleImport(): Promise<void> {
     })
     if (noticeChoice !== 'primary') return
   }
-
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'import',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length),
-    imported_bucket: toCountBucket(importResult.imported ?? 0)
-  })
 
   // The import only staged a restore target; nothing landed in the live history
   // yet, so don't reload here. The restore commits it on success and the

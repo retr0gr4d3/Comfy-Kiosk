@@ -7,7 +7,6 @@ import { getActiveUvPath, getActivePythonPath } from '../pythonEnv'
 import { classifyTorchStackForSnapshot } from '../../sources/standalone/torchStackCatalog'
 import { torchPackageTuplesEqual } from '../../sources/standalone/torchStackTypes'
 import type { SnapshotTorchStack } from '../../sources/standalone/torchStackTypes'
-import * as telemetry from '../telemetry'
 import type { Snapshot, SnapshotEntry } from './types'
 import type { InstallationRecord } from '../../installations'
 import type { ComfyVersion } from '../version'
@@ -315,47 +314,6 @@ async function deduplicateRestartSnapshot(
   return prev.filename
 }
 
-/**
- * Emit `comfy.desktop.snapshot.created` for every successful snapshot write.
- *
- * Centralized here (instead of inside `writeSnapshot`) because the wrapper
- * functions own the `InstallationRecord` (for `installation_id`) and the
- * dedup outcome (for `deduplicated_previous`). `writeSnapshot` is kept
- * pure so it can be reused by future callers without touching telemetry.
- *
- * `telemetry.emit` no-ops when consent is off / SDK uninitialized, so this
- * is safe to call unconditionally and from unit tests.
- */
-function emitSnapshotCreated(opts: {
-  installation: InstallationRecord
-  trigger: Snapshot['trigger']
-  customNodesCount: number
-  pipPackagesCount: number
-  hasLabel: boolean
-  /**
-   * True when `captureSnapshotIfChanged` collapsed the previous restart
-   * snapshot into this one (the only path that can ever trip dedup-on-create).
-   * Direct `saveSnapshot` callers always pass `false`.
-   */
-  deduplicatedPrevious: boolean
-}): void {
-  // Skip the boot-trigger emit — it fires on every restart for every
-  // user (537 events / 235 users in 30d), and the signal duplicates
-  // session.started. The other triggers (manual / pre-update / post-
-  // update / restart / post-restore) carry real product intent and
-  // stay on. `manual` in particular is what we use to measure actual
-  // user-initiated snapshotting.
-  if (opts.trigger === 'boot') return
-  telemetry.emit('comfy.desktop.snapshot.created', {
-    installation_id: opts.installation.id,
-    trigger: opts.trigger,
-    custom_nodes_count: opts.customNodesCount,
-    pip_packages_count: opts.pipPackagesCount,
-    has_label: opts.hasLabel,
-    deduplicated_previous: opts.deduplicatedPrevious
-  })
-}
-
 export async function captureSnapshotIfChanged(
   installPath: string,
   installation: InstallationRecord,
@@ -386,15 +344,6 @@ export async function captureSnapshotIfChanged(
       deduplicated = await deduplicateRestartSnapshot(installPath, filename).catch(() => undefined)
     }
 
-    emitSnapshotCreated({
-      installation,
-      trigger,
-      customNodesCount: current.customNodes.length,
-      pipPackagesCount: Object.keys(current.pipPackages).length,
-      hasLabel: false,
-      deduplicatedPrevious: deduplicated !== undefined
-    })
-
     // Prune old auto snapshots
     await pruneAutoSnapshots(installPath, AUTO_SNAPSHOT_LIMIT).catch(() => {})
 
@@ -411,14 +360,6 @@ export async function saveSnapshot(
   return withLock(installPath, async () => {
     const current = await captureState(installPath, installation)
     const filename = await writeSnapshot(installPath, { ...current, trigger, label: label || null })
-    emitSnapshotCreated({
-      installation,
-      trigger,
-      customNodesCount: current.customNodes.length,
-      pipPackagesCount: Object.keys(current.pipPackages).length,
-      hasLabel: !!(label && label.length > 0),
-      deduplicatedPrevious: false
-    })
     return filename
   })
 }
@@ -498,14 +439,6 @@ export async function ensureCurrentSnapshotOnTop(
       { ...current, trigger: 'post-restore', label: label || null },
       writeAt
     )
-    emitSnapshotCreated({
-      installation,
-      trigger: 'post-restore',
-      customNodesCount: current.customNodes.length,
-      pipPackagesCount: Object.keys(current.pipPackages).length,
-      hasLabel: !!label,
-      deduplicatedPrevious: false
-    })
     return { saved: true, filename }
   })
 }

@@ -31,7 +31,7 @@ type MockPopupConfig =
       theme: { bg: string; text: string }
     }
 
-type MockGlobalSettingsSnapshot = Record<string, unknown> & { telemetryGranted: boolean }
+type MockGlobalSettingsSnapshot = Record<string, unknown>
 
 interface MockBridgeState {
   configCallbacks: ((cfg: MockPopupConfig) => void)[]
@@ -420,10 +420,9 @@ describe('TitlePopupApp', { timeout: 20_000 }, () => {
 })
 
 // The global-settings view is the popup's `v-else` branch, so it renders from
-// an App-level ref rather than from props main controls directly. Both the ref
-// initializer and the live push have to carry `telemetryGranted` or todo 16's
-// toggle reads `undefined` — which is not `false` to a strict entry rule.
-describe('TitlePopupApp global-settings telemetry grant', { timeout: 20_000 }, () => {
+// an App-level ref rather than from props main controls directly; a live push
+// has to replace that ref for the view to see it.
+describe('TitlePopupApp global-settings snapshot', { timeout: 20_000 }, () => {
   let bridgeState: MockBridgeState
 
   const globalSettingsViewStub = {
@@ -432,20 +431,19 @@ describe('TitlePopupApp global-settings telemetry grant', { timeout: 20_000 }, (
     template: '<div class="global-settings-stub" />'
   }
 
-  function snapshot(telemetryGranted: boolean): MockGlobalSettingsSnapshot {
+  function snapshot(modelsSystemDefault: string): MockGlobalSettingsSnapshot {
     return {
       initialTab: null,
       languageFields: [],
       generalFields: [],
-      telemetryFields: [],
+      betaFields: [],
       desktopUpdateFields: [],
       cacheFields: [],
       advancedFields: [],
       sharedDirectoriesFields: [],
       installLocationFields: [],
       modelsDirs: [],
-      modelsSystemDefault: '',
-      telemetryGranted,
+      modelsSystemDefault,
       appUpdate: {
         state: {},
         progress: null,
@@ -475,20 +473,7 @@ describe('TitlePopupApp global-settings telemetry grant', { timeout: 20_000 }, (
     vi.resetModules()
   })
 
-  it('starts with the grant withheld before main pushes anything', async () => {
-    const { default: TitlePopupApp } = await import('./TitlePopupApp.vue')
-    const wrapper = mount(TitlePopupApp, {
-      global: { stubs: { GlobalSettingsView: globalSettingsViewStub } }
-    })
-    await flushPromises()
-
-    const vm = wrapper.vm as unknown as {
-      globalSettingsSnapshot: { telemetryGranted: boolean }
-    }
-    expect(vm.globalSettingsSnapshot.telemetryGranted).toBe(false)
-  })
-
-  it('passes a live snapshot grant through to the global-settings view', async () => {
+  it('passes a live snapshot through to the global-settings view', async () => {
     const { default: TitlePopupApp } = await import('./TitlePopupApp.vue')
     const wrapper = mount(TitlePopupApp, {
       global: { stubs: { GlobalSettingsView: globalSettingsViewStub } }
@@ -497,18 +482,22 @@ describe('TitlePopupApp global-settings telemetry grant', { timeout: 20_000 }, (
     bridgeState.configCallbacks.forEach((cb) =>
       cb({
         kind: 'global-settings',
-        snapshot: snapshot(false),
+        snapshot: snapshot('/initial'),
         theme: { bg: '#262729', text: '#dddddd' }
       })
     )
     await flushPromises()
 
     const view = wrapper.findComponent({ name: 'GlobalSettingsView' })
-    expect((view.props('snapshot') as MockGlobalSettingsSnapshot).telemetryGranted).toBe(false)
+    expect((view.props('snapshot') as MockGlobalSettingsSnapshot).modelsSystemDefault).toBe(
+      '/initial'
+    )
 
-    bridgeState.globalSettingsSnapshotCallbacks.forEach((cb) => cb(snapshot(true)))
+    bridgeState.globalSettingsSnapshotCallbacks.forEach((cb) => cb(snapshot('/pushed')))
     await flushPromises()
 
-    expect((view.props('snapshot') as MockGlobalSettingsSnapshot).telemetryGranted).toBe(true)
+    expect((view.props('snapshot') as MockGlobalSettingsSnapshot).modelsSystemDefault).toBe(
+      '/pushed'
+    )
   })
 })

@@ -525,7 +525,7 @@ const remoteUrlField = computed<DetailField | null>(() => {
 })
 
 /** Commit a remote-URL edit through `updateField` (optimistic write, rollback,
- *  error pill, restart-dirty + telemetry). Resolves `false` on rejection so
+ *  error pill, restart-dirty). Resolves `false` on rejection so
  *  StatusFactPanel reverts; success is read back from the field-error map. */
 async function handleUrlUpdate(value: string): Promise<boolean> {
   const field = remoteUrlField.value

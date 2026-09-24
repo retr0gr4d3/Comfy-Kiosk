@@ -207,8 +207,7 @@ interface Bridge {
   clickInstallPill: (anchor: MenuAnchor) => void
   /** Click handler for the title-bar Send Feedback button. Main
    *  forwards `comfy-panel:open-feedback` to the panel renderer,
-   *  which fires the `comfy.desktop.feedback.opened` telemetry action and
-   *  opens the support URL via `openExternal`. */
+   *  which opens the feedback modal. */
   clickFeedback: () => void
   /** Click handler for the title-bar news bell. Main forwards
    *  `comfy-panel:open-announcement` to the panel renderer, which mounts
@@ -303,9 +302,8 @@ const {
 } = useUpdatePills({ bridge, isInstallLess })
 
 /** Title-bar Send Feedback button. Routes through main, which forwards
- *  `comfy-panel:open-feedback` to the panel renderer — the renderer
- *  fires the `comfy.desktop.feedback.opened` telemetry action and opens the
- *  support URL via `openExternal`. The waffle menu's "Send Feedback"
+ *  `comfy-panel:open-feedback` to the panel renderer, which opens the
+ *  feedback modal. The waffle menu's "Send Feedback"
  *  entry lands on the same panel-side handler. */
 function handleFeedback(): void {
   bridge?.clickFeedback()
@@ -562,7 +560,7 @@ const betaNotice = useBetaActivationNotice({
   anchorRef: announcementBtnRef,
   isSuppressed: () => coachmark.isShowing.value,
   // Four wordings, picked by what main could establish: whether the grant turned the feature
-  // on or withdrew it, and whether the PostHog payload named it. The generic pair is the
+  // on or withdrew it, and whether the ops-flag payload named it. The generic pair is the
   // fallback, so an unnamed feature still gets a card that is true.
   copyFor: ({ direction, description }) => {
     // Static keys rather than composed ones: `createAppI18n` disables missing-key warnings, so

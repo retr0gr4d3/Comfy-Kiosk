@@ -10,7 +10,6 @@ import SnapshotTab from '../components/SnapshotTab.vue'
 import ModalShell from '../components/ModalShell.vue'
 import { useInstallationStore } from '../stores/installationStore'
 import { useSessionStore } from '../stores/sessionStore'
-import { emitTelemetryAction, toErrorBucket } from '../lib/telemetry'
 import { formatBytes } from '../lib/formatting'
 import { findActionById } from '../lib/findAction'
 import { progressOpKindForActionId, destroysInstanceForActionId } from '../lib/progressOpKind'
@@ -301,11 +300,6 @@ function handleActionClick(action: ActionDef, event: MouseEvent): void {
 async function runAction(action: ActionDef, btn: HTMLButtonElement | null): Promise<void> {
   if (!props.installation) return
   const instId = props.installation.id
-  const telemetryContext = {
-    source_category: props.installation.sourceCategory || 'unknown',
-    ui_surface: 'detail'
-  }
-
   // migrate-to-standalone owns its busy check + confirm via useMigrateAction, so skip both pre-flights (the apiCall self-stop still applies).
   const ownsPreflight = action.id === 'migrate-to-standalone'
   const requiresStoppedGuard = REQUIRES_STOPPED.has(action.id)
@@ -364,10 +358,6 @@ async function runAction(action: ActionDef, btn: HTMLButtonElement | null): Prom
       (_, k: string) => String((mutableAction.data as Record<string, unknown>)?.[k] ?? k)
     )
     const title = `${rawTitle} — ${instName}`
-    emitTelemetryAction('comfy.desktop.action.invoked', {
-      action_id: mutableAction.id,
-      ...telemetryContext
-    })
     // Synthetic 'restart': chain stopComfyUI → launch in one ProgressModal so the user sees one continuous view.
     const isRestart = mutableAction.id === 'restart'
     const needsSelfStop = wasRunning && requiresStoppedGuard && !isRestart
@@ -420,10 +410,6 @@ async function runAction(action: ActionDef, btn: HTMLButtonElement | null): Prom
     btn.classList.add('loading')
   }
   try {
-    emitTelemetryAction('comfy.desktop.action.invoked', {
-      action_id: mutableAction.id,
-      ...telemetryContext
-    })
     if (wasRunning && requiresStoppedGuard) {
       await stopAndWaitForExit(instId, () => sessionStore.isRunning(instId))
     }
@@ -445,12 +431,6 @@ async function runAction(action: ActionDef, btn: HTMLButtonElement | null): Prom
     ) {
       await window.api.runAction(instId, 'launch')
     }
-    const resultValue = result.cancelled ? 'cancelled' : result.ok === false ? 'failed' : 'ok'
-    emitTelemetryAction('comfy.desktop.action.result', {
-      action_id: mutableAction.id,
-      result: resultValue,
-      ...telemetryContext
-    })
     if (result.navigate === 'list') {
       emit('close')
       emit('navigate-list')
@@ -460,12 +440,6 @@ async function runAction(action: ActionDef, btn: HTMLButtonElement | null): Prom
       await modal.alert({ title: mutableAction.label, message: result.message })
     }
   } catch (error: unknown) {
-    emitTelemetryAction('comfy.desktop.action.result', {
-      action_id: mutableAction.id,
-      result: 'failed',
-      error_bucket: toErrorBucket(error),
-      ...telemetryContext
-    })
     await modal.alert({
       title: mutableAction.label,
       message: error instanceof Error ? error.message : String(error)

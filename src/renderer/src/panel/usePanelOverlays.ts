@@ -7,7 +7,6 @@ import type QuickInstallModal from '../views/QuickInstallModal.vue'
 import type FirstUseTakeover from '../views/FirstUseTakeover.vue'
 import { useOverlay, type FlowComponent, type Overlay } from '../composables/useOverlay'
 import { useProgressStore } from '../stores/progressStore'
-import { emitTelemetryAction } from '../lib/telemetry'
 import type { ActionResult, ShowProgressOpts } from '../types/ipc'
 import type { FirstUseMode } from '../../../shared/firstUseMode'
 import { useDashboardScopeStore } from '../stores/dashboardScopeStore'
@@ -75,14 +74,6 @@ const FLOW_PANELS: ReadonlySet<PanelKey> = new Set([
   'quick-install'
 ])
 
-/** Stable `flow:` strings for `comfy.desktop.install.flow.opened`. */
-const FLOW_TELEMETRY_NAMES: Record<FlowComponent, string> = {
-  'new-install': 'new_install',
-  'quick-install': 'quick_install',
-  track: 'track_existing',
-  'load-snapshot': 'load_snapshot'
-}
-
 export function isValidPanel(raw: string | null | undefined): raw is PanelKey {
   return !!raw && VALID_PANELS.has(raw as PanelKey)
 }
@@ -143,10 +134,10 @@ export interface UsePanelOverlaysApi {
   // Helpers.
   handleShowProgress: (opts: ShowProgressOpts) => Promise<void>
   handleProgressClose: () => void
-  openFlowTakeover: (component: FlowComponent, entrypoint: string) => Promise<void>
+  openFlowTakeover: (component: FlowComponent) => Promise<void>
   openFirstUseTakeover: (opts?: { initialStep?: 'start' | 'localBranch' }) => Promise<void>
   dismissTakeoverDirect: () => void
-  switchPanel: (panel: PanelKey, entrypoint?: string) => Promise<void>
+  switchPanel: (panel: PanelKey) => Promise<void>
 }
 
 const isProgressTakeover = (o: Overlay | null | undefined): boolean =>
@@ -352,7 +343,7 @@ export function usePanelOverlays(opts: UsePanelOverlaysOpts): UsePanelOverlaysAp
    * The imperative `open()` reset on each *Modal ref runs after the
    * takeover mounts so form state always starts fresh.
    */
-  async function openFlowTakeover(component: FlowComponent, entrypoint: string): Promise<void> {
+  async function openFlowTakeover(component: FlowComponent): Promise<void> {
     // Opt the install-flow wizards into the dedicated "Discard install
     // setup?" cancel-prompt copy. The wizards have no destructive op
     // in flight (the install kicks off after the wizard's final step,
@@ -362,10 +353,6 @@ export function usePanelOverlays(opts: UsePanelOverlaysOpts): UsePanelOverlaysAp
     const ok = await openOverlay({ kind: 'takeover', component, cancelCopyKey: 'discard-setup' })
     if (!ok) return
     const openedOverlay = currentOverlay.value
-    emitTelemetryAction('comfy.desktop.install.flow.opened', {
-      flow: FLOW_TELEMETRY_NAMES[component],
-      entrypoint
-    })
     // Wait for the v-if branch in the takeover slot to mount the
     // component before reaching for its ref.
     await nextTick()
@@ -379,7 +366,6 @@ export function usePanelOverlays(opts: UsePanelOverlaysOpts): UsePanelOverlaysAp
       await dashboardScope.initialize()
       if (currentOverlay.value !== openedOverlay) return
       await newInstallRef.value?.open({
-        entrypoint,
         workspaceId: dashboardScope.selectedWorkspaceId,
         ...(cameFromLocalBranch ? { cameFromLocalBranch } : {})
       })
@@ -471,18 +457,12 @@ export function usePanelOverlays(opts: UsePanelOverlaysOpts): UsePanelOverlaysAp
    * is no longer a panel key — it's reached via `openInstancePicker(mode:
    * 'expanded')`. Global Settings is reached via `openGlobalSettings()`.
    */
-  async function switchPanel(panel: PanelKey, entrypoint: string = 'titlebar'): Promise<void> {
-    const fromView = activePanel.value
+  async function switchPanel(panel: PanelKey): Promise<void> {
     if (FLOW_PANELS.has(panel)) {
-      await openFlowTakeover(panel as FlowComponent, entrypoint)
+      await openFlowTakeover(panel as FlowComponent)
       return
     }
-    // No-op guard so a redundant `panel-switch` IPC (e.g. main re-
-    // confirms `'comfy-lifecycle'` after an instance stop while we're
-    // already there) doesn't generate a noise event.
-    if (panel === fromView) return
     activePanel.value = panel
-    emitTelemetryAction('comfy.desktop.view.opened', { view: panel, from_view: fromView })
   }
 
   return {

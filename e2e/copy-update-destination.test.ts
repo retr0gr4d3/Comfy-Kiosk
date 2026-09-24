@@ -45,7 +45,7 @@ test.beforeAll(async () => {
   await writeFile(path.join(sourcePath, MARKER_FILENAME), SOURCE_ID)
 
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
     installations: [
       {
         id: SOURCE_ID,

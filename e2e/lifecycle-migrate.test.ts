@@ -79,7 +79,7 @@ test.beforeAll(async () => {
   await mkdir(path.join(legacyBasePath, '.venv'), { recursive: true })
 
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
     async onSetup({ homeDir }) {
       // Write the legacy Desktop config.json the auto-tracker reads at
       // boot. On Windows it lives under %APPDATA%/ComfyUI/, which the

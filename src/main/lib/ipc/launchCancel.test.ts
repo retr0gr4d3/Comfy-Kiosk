@@ -21,7 +21,6 @@ import {
   _endLaunch,
   _hasActiveLaunch,
   _operationAborts,
-  cancelAll,
   cancelLaunching,
   _test_addRunningSession,
   _test_clearRunningSessions
@@ -35,17 +34,6 @@ afterEach(() => {
   _operationAborts.delete(INSTALL)
   _test_clearRunningSessions()
   expect(_hasActiveLaunch(INSTALL)).toBe(false)
-})
-
-describe('cancelAll', () => {
-  it('flushes running-session telemetry synchronously before process teardown', () => {
-    const flushTelemetry = vi.fn()
-    _test_addRunningSession(INSTALL, 'install-under-test-name', flushTelemetry)
-
-    cancelAll()
-
-    expect(flushTelemetry).toHaveBeenCalledOnce()
-  })
 })
 
 describe('launch tracking (_beginLaunch/_endLaunch/_hasActiveLaunch)', () => {

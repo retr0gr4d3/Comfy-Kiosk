@@ -9,12 +9,7 @@ vi.mock('./git', () => ({
   rollbackComfySource: vi.fn()
 }))
 
-vi.mock('./telemetry', () => ({
-  emit: vi.fn()
-}))
-
 import { readGitHead, rollbackComfySource } from './git'
-import * as telemetry from './telemetry'
 import {
   writeOpMarker,
   readOpMarker,
@@ -25,7 +20,6 @@ import {
 
 const mockedReadGitHead = vi.mocked(readGitHead)
 const mockedRollback = vi.mocked(rollbackComfySource)
-const mockedEmit = vi.mocked(telemetry.emit)
 
 const MARKER_NAME = '.comfyui-op-in-progress.json'
 
@@ -96,7 +90,6 @@ describe('recoverInterruptedComfyOp', () => {
       undefined
     )
     expect(fs.existsSync(path.join(installPath, MARKER_NAME))).toBe(false)
-    expect(mockedEmit).toHaveBeenCalledWith('comfy.desktop.recovery.rolled_back', { op: 'update' })
   })
 
   it('fires onRollback only when an actual rollback runs, not on a benign cleanup', async () => {
@@ -155,11 +148,6 @@ describe('recoverInterruptedComfyOp', () => {
     const marker = readOpMarker(installPath)
     expect(marker).not.toBeNull()
     expect(marker!.recoveryAttempts).toBe(1)
-    expect(mockedEmit).toHaveBeenCalledWith('comfy.desktop.recovery.failed', {
-      op: 'update',
-      attempts: 1,
-      gave_up: false
-    })
   })
 
   it('names the local backup branch in the failure message when one was recorded', async () => {
@@ -194,11 +182,6 @@ describe('recoverInterruptedComfyOp', () => {
     const recovered = await recoverInterruptedComfyOp(installPath)
     expect(recovered).toBe(true)
     expect(fs.existsSync(path.join(installPath, MARKER_NAME))).toBe(false)
-    expect(mockedEmit).toHaveBeenCalledWith('comfy.desktop.recovery.failed', {
-      op: 'update',
-      attempts: 3,
-      gave_up: true
-    })
   })
 })
 
