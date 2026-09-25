@@ -26,7 +26,8 @@ const RENDERER_HTMLS = [
   'comfyTitlePopup.html',
   'comfyTitleTooltip.html',
   'comfySystemModal.html',
-  'systemTerminal.html'
+  'systemTerminal.html',
+  'appsOverlay.html'
 ] as const
 
 describe('Content-Security-Policy: panel.html', () => {

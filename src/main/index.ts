@@ -23,7 +23,7 @@ import type { ExitCallbackInfo } from './lib/ipc'
 import { closeAllPopouts } from './lib/popoutWindows'
 import { disposeAllTerminals } from './lib/terminal'
 import { disposeSystemTerminal } from './lib/systemTerminal'
-import { installSystemTerminalShortcut } from './lib/systemTerminalShortcut'
+import { installWindowShortcuts } from './lib/windowShortcuts'
 import * as updater from './lib/updater'
 import * as settings from './settings'
 import { installAppMenu } from './menu'
@@ -37,7 +37,9 @@ import { pruneCrashDumps } from './lib/crashDumps'
 import { createStartupReentryGate } from './lib/startupReentryGate'
 import { registerTitleTooltipIpc } from './popups/titleTooltip'
 import { registerTitleCoachmarkIpc } from './popups/titleCoachmark'
-import { registerSystemTerminalIpc, toggleSystemTerminal } from './popups/systemTerminalView'
+import { openSystemTerminal, registerSystemTerminalIpc } from './popups/systemTerminalView'
+import { registerAppsOverlayIpc } from './popups/appsOverlay'
+import { toggleAppsLauncher, toggleTerminalOverlay } from './popups/bodyOverlays'
 import {
   openSystemModal,
   openSystemModalAsync,
@@ -1063,6 +1065,13 @@ ipcMain.on('comfy-window:click-feedback', (event) => {
   triggerOpenFeedback(found.entry.windowKey)
 })
 
+/** Title-bar Apps button: toggles the in-window apps launcher (same as Ctrl+Alt+A). */
+ipcMain.on('comfy-window:click-apps', (event) => {
+  const found = findEntryByTitleBarSender(event.sender)
+  if (!found) return
+  toggleAppsLauncher(found.entry.window)
+})
+
 /** Flip into the 'announcement' overlay panel (mirrors triggerOpenFeedback):
  * lazily ensure the panel view, make it visible over comfyView, and tell the
  * panel renderer to mount the announcement modal. */
@@ -1438,7 +1447,11 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
     })
     registerSystemModalIpc()
     registerSystemTerminalIpc()
-    installSystemTerminalShortcut(toggleSystemTerminal)
+    registerAppsOverlayIpc({ openTerminal: openSystemTerminal })
+    installWindowShortcuts([
+      { letter: 't', onTrigger: toggleTerminalOverlay },
+      { letter: 'a', onTrigger: toggleAppsLauncher }
+    ])
 
     /**
      * Land `installationId` into `entry` (which must be chooser-shaped): ensure

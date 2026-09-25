@@ -124,6 +124,10 @@ function finishHide(entry: OverlayEntry): void {
   const target = entry.returnFocus
   entry.returnFocus = null
   if (entry.view.parentWindow.isDestroyed()) return
+  // Something else (e.g. the apps overlay) took focus during the exit
+  // animation: leave it there.
+  const focused = electronWebContents.getFocusedWebContents()
+  if (focused && focused !== entry.view.popup.webContents) return
   if (target && !target.isDestroyed()) target.focus()
   else entry.view.parentWindow.focus()
 }

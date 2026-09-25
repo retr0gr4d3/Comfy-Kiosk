@@ -36,6 +36,26 @@ Comfy Desktop is the official desktop application for **ComfyUI**, the node-base
 - ⬆️ **Built-in auto-updates** — the app keeps itself current.
 - 🛠️ **Works without system Git** — bundles a tiny Python + `pygit2` bootstrap so clones work on a clean machine.
 - ⌨️ **Built-in system terminal** — press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> anywhere in the app to drop down a login shell inside the window (press it again to hide it; `exit` ends the session). Made for kiosk setups such as [cage](https://github.com/cage-kiosk/cage), where a separate terminal window would cover the app.
+- 🧭 **Built-in apps & browser** — press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>A</kbd> (or the grid button in the title bar) for an in-window launcher with a tabbed browser, web apps and the terminal. Pages stay inside the window: popups open as tabs, downloads go to `~/Downloads`, and pages can only load `http(s)`. See [Apps launcher](#apps-launcher) to configure it.
+
+## Apps launcher
+
+The launcher always offers **Browser** and **Terminal**. Web apps and the browser's home page and search engine come from `apps.json` in the config directory (`~/.config/comfyui-desktop-2/` on Linux); edits apply the next time the launcher opens:
+
+```json
+{
+  "browser": {
+    "homeUrl": "https://start.duckduckgo.com",
+    "searchUrl": "https://duckduckgo.com/?q=%s"
+  },
+  "apps": [
+    { "id": "docs", "name": "ComfyUI Docs", "url": "https://docs.comfy.org" },
+    { "id": "grafana", "name": "GPU Dashboard", "url": "http://localhost:3000" }
+  ]
+}
+```
+
+An `apps` list replaces the defaults (use `[]` for none); entries that aren't `http(s)` URLs are ignored. Browsed pages run sandboxed in their own storage, separate from ComfyUI's. In a page: <kbd>Ctrl</kbd>+<kbd>L</kbd> address bar, <kbd>Ctrl</kbd>+<kbd>T</kbd>/<kbd>W</kbd> new/close tab, <kbd>Ctrl</kbd>+<kbd>Tab</kbd> next tab, <kbd>Alt</kbd>+<kbd>←</kbd>/<kbd>→</kbd> back/forward, <kbd>Ctrl</kbd>+<kbd>R</kbd> reload.
 
 ## Download
 

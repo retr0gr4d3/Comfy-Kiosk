@@ -193,6 +193,9 @@ export interface ComfyTitleBarBridge {
    *  `comfy-panel:open-feedback` to the panel renderer, which opens the
    *  feedback modal. */
   clickFeedback(): void
+  /** Click handler for the title-bar Apps button. Toggles the in-window
+   *  apps launcher / contained browser (same as Ctrl+Alt+A). */
+  clickApps(): void
   /** Click handler for the title-bar news bell. Main resolves the host
    *  entry from the sender and forwards `comfy-panel:open-announcement` to
    *  the panel renderer, which mounts the announcement modal over the
@@ -433,6 +436,9 @@ const bridge: ComfyTitleBarBridge = {
   },
   clickFeedback: () => {
     ipcRenderer.send('comfy-window:click-feedback')
+  },
+  clickApps: () => {
+    ipcRenderer.send('comfy-window:click-apps')
   },
   clickAnnouncement: () => {
     ipcRenderer.send('comfy-window:click-announcement')
