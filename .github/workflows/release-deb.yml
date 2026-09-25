@@ -85,10 +85,14 @@ jobs:
           set -euo pipefail
           deb="$(ls dist/*.deb)"
           dpkg-deb -I "$deb"
+          # List to a file first: piping into `grep -q` makes dpkg-deb's tar
+          # die of SIGPIPE on the first match, which pipefail reports as a miss.
+          listing="$(mktemp)"
+          dpkg-deb -c "$deb" > "$listing"
           # Without the Linux node-pty binary the Ctrl+Alt+T terminal is dead.
-          dpkg-deb -c "$deb" | grep -q 'node-pty/build/Release/pty.node' \
+          grep -q 'node-pty/build/Release/pty.node' "$listing" \
             || { echo "::error::node-pty's Linux binary is missing from $deb"; exit 1; }
-          dpkg-deb -c "$deb" | grep -q 'resources/bootstrap-python/bin/python3' \
+          grep -q 'resources/bootstrap-python/bin/python3' "$listing" \
             || { echo "::error::bundled Python is missing from $deb"; exit 1; }
           (cd dist && sha256sum "$(basename "$deb")" > "$(basename "$deb").sha256")
 
