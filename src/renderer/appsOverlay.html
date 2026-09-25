@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Comfy Desktop — Apps</title>
+    <!--
+      The apps overlay runs in a transparent WebContentsView over the host
+      window's body and draws only the launcher and browser chrome. Browsed
+      pages are separate sandboxed views, so this page needs nothing beyond
+      its own bundle.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws:"
+    />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/appsOverlay/main.ts"></script>
+  </body>
+</html>

@@ -69,6 +69,8 @@
     "menu": "菜单",
     "feedback": "反馈",
     "feedbackTooltip": "发送反馈",
+    "apps": "应用",
+    "appsTooltip": "应用与浏览器 (Ctrl+Alt+A)",
     "announcement": "最新动态",
     "announcementTooltip": "最新动态",
     "downloads": "下载",
@@ -1720,5 +1722,25 @@
     "title": "终端",
     "hint": "按 Ctrl+Alt+T 隐藏",
     "close": "关闭终端"
+  },
+  "appsOverlay": {
+    "title": "应用",
+    "hint": "按 Ctrl+Alt+A 隐藏",
+    "close": "关闭应用",
+    "newTab": "新标签页",
+    "closeTab": "关闭标签页",
+    "back": "后退",
+    "forward": "前进",
+    "reload": "重新加载",
+    "stop": "停止",
+    "addressPlaceholder": "搜索或输入网址",
+    "loadFailed": "无法加载此页面",
+    "retry": "重试",
+    "launcherHeading": "应用",
+    "untitled": "新标签页",
+    "appBrowser": "浏览器",
+    "appTerminal": "终端",
+    "downloaded": "已将 {name} 保存到下载文件夹",
+    "downloadFailed": "无法下载 {name}"
   }
 }

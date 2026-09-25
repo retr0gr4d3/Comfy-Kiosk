@@ -47,6 +47,7 @@ interface MockBridgeState {
   downloadsTrayClicks: number
   installPillClicks: { x: number; y: number }[]
   feedbackClicks: number
+  appsClicks: number
   refreshInstanceClicks: number
   resetZoomClicks: number
   showTooltipCalls: { text: string; leftX: number; rightX: number; bottomY: number }[]
@@ -97,6 +98,7 @@ function installMockBridge(
     downloadsTrayClicks: 0,
     installPillClicks: [],
     feedbackClicks: 0,
+    appsClicks: 0,
     refreshInstanceClicks: 0,
     resetZoomClicks: 0,
     showTooltipCalls: [],
@@ -204,6 +206,9 @@ function installMockBridge(
     },
     clickFeedback: () => {
       state.feedbackClicks += 1
+    },
+    clickApps: () => {
+      state.appsClicks += 1
     },
     clickRefreshInstance: () => {
       state.refreshInstanceClicks += 1
@@ -972,6 +977,18 @@ describe('TitleBarApp', () => {
     expect(btn.text()).toBe('')
     await btn.trigger('click')
     expect(bridgeState.feedbackClicks).toBe(1)
+    wrapper.unmount()
+  })
+
+  it('renders an Apps button and forwards clicks through the bridge', async () => {
+    const { default: TitleBarApp } = await import('./TitleBarApp.vue')
+    const wrapper = mount(TitleBarApp, { attachTo: document.body })
+    await flushPromises()
+    const btn = wrapper.find('.title-apps-button')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('aria-label')).toBe('Apps')
+    await btn.trigger('click')
+    expect(bridgeState.appsClicks).toBe(1)
     wrapper.unmount()
   })
 

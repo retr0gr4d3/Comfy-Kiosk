@@ -178,6 +178,7 @@ describe('system terminal overlay', () => {
     openSystemTerminal(win)
     const view = h.views[0]!
     fire('system-terminal:ready', view.popupWebContentsId)
+    h.focused = view.popup.webContents
 
     closeSystemTerminal(win)
     expect(view.popup.webContents.send).toHaveBeenCalledWith('system-terminal:hide')
@@ -186,6 +187,21 @@ describe('system terminal overlay', () => {
     fire('system-terminal:hidden', view.popupWebContentsId)
     expect(view.hide).toHaveBeenCalledTimes(1)
     expect(previous.focus).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves focus alone when something else took it during the exit animation', () => {
+    const win = fakeWindow()
+    const previous = fakeFocusTarget()
+    h.focused = previous
+    openSystemTerminal(win)
+    const view = h.views[0]!
+    fire('system-terminal:ready', view.popupWebContentsId)
+    closeSystemTerminal(win)
+    h.focused = fakeFocusTarget()
+    fire('system-terminal:hidden', view.popupWebContentsId)
+    expect(view.hide).toHaveBeenCalledTimes(1)
+    expect(previous.focus).not.toHaveBeenCalled()
+    expect(win.focus).not.toHaveBeenCalled()
   })
 
   it('hides anyway when the renderer never acks the exit animation', () => {

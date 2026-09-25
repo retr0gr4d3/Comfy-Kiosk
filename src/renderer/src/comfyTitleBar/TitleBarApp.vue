@@ -6,6 +6,7 @@ import {
   Bell,
   ChevronDown,
   CloudDownload,
+  LayoutGrid,
   Loader2,
   Menu as MenuIcon,
   MessageSquarePlus,
@@ -209,6 +210,8 @@ interface Bridge {
    *  forwards `comfy-panel:open-feedback` to the panel renderer,
    *  which opens the feedback modal. */
   clickFeedback: () => void
+  /** Toggles the in-window apps launcher / contained browser. */
+  clickApps: () => void
   /** Click handler for the title-bar news bell. Main forwards
    *  `comfy-panel:open-announcement` to the panel renderer, which mounts
    *  the announcement modal over the live canvas. */
@@ -307,6 +310,10 @@ const {
  *  entry lands on the same panel-side handler. */
 function handleFeedback(): void {
   bridge?.clickFeedback()
+}
+
+function handleApps(): void {
+  bridge?.clickApps()
 }
 
 function handleRefreshInstance(): void {
@@ -1040,6 +1047,16 @@ onUnmounted(() => {
           <span class="title-zoom-reset-percent">{{ zoomPercent }}%</span>
         </button>
       </Transition>
+      <button
+        v-if="!isFirstUseLockdown"
+        type="button"
+        class="title-menu-button title-menu-button--icon title-apps-button"
+        data-testid="title-apps-button"
+        v-bind="tooltipAttrs(t('titleBar.appsTooltip'), t('titleBar.apps'))"
+        @click="handleApps"
+      >
+        <LayoutGrid :size="16" />
+      </button>
       <button
         v-if="!isFirstUseLockdown"
         ref="announcementBtn"
