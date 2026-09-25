@@ -8,7 +8,6 @@ import {
   type ReturnToDashboardReason
 } from '../composables/useReturnToDashboardConfirm'
 import { useInstallationStore } from '../stores/installationStore'
-import { emitTelemetryAction } from '../lib/telemetry'
 
 import { useTerminalScroll } from '../composables/useTerminalScroll'
 import { useProgressStore } from '../stores/progressStore'
@@ -72,7 +71,6 @@ const canSkipTemplateDownload = computed<boolean>(() => {
 async function handleSkipTemplateDownload(): Promise<void> {
   const id = displayId.value
   if (!id) return
-  emitTelemetryAction('comfy.desktop.template.download.skipped', { flow: 'launch' })
   try {
     await window.api.skipTemplateDownload(id)
     // Mark consumed only on success, so a failed hand-off leaves the button live.
@@ -276,9 +274,6 @@ const progressSteps = computed<ProgressStepVM[]>(() => {
 
 const cloudGate = useCloudGate()
 async function handleShowcaseCloud(): Promise<void> {
-  emitTelemetryAction('comfy.desktop.install.showcase.cloud_open', {
-    phase: currentOp.value?.activePhase ?? null
-  })
   // A silent no-op reads as a dead button, so a failed launch says so.
   if (await cloudGate.openCloud()) return
   await modal.alert({
@@ -335,7 +330,7 @@ watch(
   { immediate: true }
 )
 
-// Render only a trailing window; the store keeps the full buffer for telemetry. Rendering megabytes into one text node re-layouts the whole takeover.
+// Render only a trailing window; the store keeps the full buffer. Rendering megabytes into one text node re-layouts the whole takeover.
 const MAX_LOG_TAIL_CHARS = 256 * 1024
 const displayedTerminalOutput = computed(() => {
   const s = currentOp.value?.terminalOutput ?? ''
@@ -450,7 +445,6 @@ async function returnToDashboard(reason: ReturnToDashboardReason): Promise<void>
   if (reason === 'in_flight' && op && !op.finished && id) {
     progressStore.cancelOperation(id)
   }
-  emitTelemetryAction('comfy.desktop.instance.return_to_dashboard', { from: 'progress', reason })
   emit('close')
   // No-op when the host isn't install-backed (chooser launches that errored before the swap).
   await window.api.returnToDashboard()
@@ -481,10 +475,6 @@ async function cancelDestructiveOp(): Promise<void> {
   const installation = installationStore.getById(id) ?? null
   const ok = await confirmReturnToDashboard(installation, 'in_flight')
   if (!ok) return
-  emitTelemetryAction('comfy.desktop.instance.return_to_dashboard', {
-    from: 'progress',
-    reason: 'in_flight'
-  })
   progressStore.cancelOperation(id)
   emit('close')
 }

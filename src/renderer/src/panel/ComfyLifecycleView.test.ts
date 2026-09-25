@@ -298,7 +298,7 @@ describe('ComfyLifecycleView', () => {
     await flushPromises()
     const logs = wrapper.find('.brand-progress__logs')
     expect(logs.exists()).toBe(true)
-    // PII scrubbing belongs on the telemetry path, not the local-UI path.
+    // PII scrubbing belongs on paths that leave the machine, not the local UI.
     // If any of these fail, we've regressed back to scrubbing logs the user
     // sees on their own machine (issue #674).
     expect(logs.text()).toContain('C:\\Users\\alice\\ComfyUI\\main.py')

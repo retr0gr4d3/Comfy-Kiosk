@@ -23,7 +23,6 @@ vi.mock('./shared', async () => {
       getAll: () => mockSettings,
       get: (key: string) => mockSettings[key],
       set: (key: string, value: unknown) => mockSettingsSet(key, value),
-      getTrackedSettingsTelemetryProperties: () => ({}),
       resolveBetaFeaturesEnabled: () => mockBeta.resolved
     },
     i18n: {
@@ -39,10 +38,6 @@ vi.mock('./shared', async () => {
   }
 })
 vi.mock('../titleBarOverlay', () => ({ updateTitleBarOverlay: vi.fn() }))
-vi.mock('../telemetry', () => ({
-  setConsentState: vi.fn(),
-  registerPersonProperties: vi.fn()
-}))
 vi.mock('../firstUseDetection', () => ({ detectFirstUseState: vi.fn() }))
 vi.mock('../updater', () => ({ notifyAutoUpdateChanged: vi.fn() }))
 vi.mock('../globalSettingsEvents', () => ({
@@ -161,28 +156,11 @@ describe('buildSettingsSections', () => {
   })
 })
 
-describe('applySettingSet beta enrolment consent', () => {
+describe('applySettingSet beta enrolment', () => {
   beforeEach(resetMockSettings)
 
-  it.each([
-    [false, false],
-    [undefined, undefined]
-  ])(
-    'rejects new beta enrolment when telemetry consent is %s without writing',
-    (telemetryEnabled, betaFeaturesEnabled) => {
-      mockSettings.betaFeaturesEnabled = betaFeaturesEnabled
-      mockSettings.telemetryEnabled = telemetryEnabled
-
-      applySettingSet('betaFeaturesEnabled', true)
-
-      expect(mockSettingsSet).not.toHaveBeenCalled()
-      expect(mockSettings.betaFeaturesEnabled).toBe(betaFeaturesEnabled)
-    }
-  )
-
-  it('allows new beta enrolment with explicit telemetry consent', () => {
-    mockSettings.betaFeaturesEnabled = false
-    mockSettings.telemetryEnabled = true
+  it.each([[false], [undefined]])('allows opting in from %s', (betaFeaturesEnabled) => {
+    mockSettings.betaFeaturesEnabled = betaFeaturesEnabled
 
     applySettingSet('betaFeaturesEnabled', true)
 
@@ -190,19 +168,8 @@ describe('applySettingSet beta enrolment consent', () => {
     expect(mockSettings.betaFeaturesEnabled).toBe(true)
   })
 
-  it('preserves an existing beta opt-in when telemetry is off', () => {
+  it('allows opting out of beta features', () => {
     mockSettings.betaFeaturesEnabled = true
-    mockSettings.telemetryEnabled = false
-
-    applySettingSet('betaFeaturesEnabled', true)
-
-    expect(mockSettingsSet).toHaveBeenCalledWith('betaFeaturesEnabled', true)
-    expect(mockSettings.betaFeaturesEnabled).toBe(true)
-  })
-
-  it('allows opting out of beta features when telemetry is off', () => {
-    mockSettings.betaFeaturesEnabled = true
-    mockSettings.telemetryEnabled = false
 
     applySettingSet('betaFeaturesEnabled', false)
 

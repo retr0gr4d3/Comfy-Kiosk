@@ -41,7 +41,6 @@ test.beforeAll(async () => {
   ctx = await launchApp({
     settings: {
       firstUseCompleted: true,
-      telemetryEnabled: false,
       modelsDirs: [defaultModelsDir],
       inputDir,
       outputDir

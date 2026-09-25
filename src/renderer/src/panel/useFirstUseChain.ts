@@ -5,7 +5,6 @@ import { useLauncherPrefs } from '../composables/useLauncherPrefs'
 import { useMigrateAction } from '../composables/useMigrateAction'
 import { useOverlay } from '../composables/useOverlay'
 import { DEFAULT_INSTALL_NAME } from '../../../shared/defaultInstallName'
-import { emitTelemetryAction, toVariantBucket } from '../lib/telemetry'
 import type { FieldOption, Installation, ShowProgressOpts, Source } from '../types/ipc'
 import type { ChooserLaunchOutcome } from './useChooserHandoff'
 import type { FirstUseChainHooks, PanelKey } from './usePanelOverlays'
@@ -24,7 +23,7 @@ export interface FirstUseChainOpts {
    *  hook. */
   handleShowProgress: (opts: ShowProgressOpts) => Promise<void>
   /** Used by chain-local to mount the new-install Tier 3 takeover. */
-  switchPanel: (panel: PanelKey, entrypoint?: string) => Promise<void>
+  switchPanel: (panel: PanelKey) => Promise<void>
   /** Direct-mutation overlay clear (no cancel-prompt) used by every
    *  completion path. */
   dismissTakeoverDirect: () => void
@@ -309,7 +308,7 @@ export function useFirstUseChain(opts: FirstUseChainOpts): FirstUseChainApi {
       pendingFirstUseAutoLaunchId.value = null
     }
 
-    await opts.switchPanel('new-install', 'first_use')
+    await opts.switchPanel('new-install')
   }
 
   /** Express install — the "skip Configure" path. Runs the Standalone
@@ -320,21 +319,10 @@ export function useFirstUseChain(opts: FirstUseChainOpts): FirstUseChainApi {
    *  knows the chain handoff is complete; `false` if any precondition
    *  failed and the caller should fall back to opening Configure. */
   async function runExpressInstall(): Promise<boolean> {
-    // Express vs Configure is the key onboarding-funnel split: express
-    // skips the Configure screen and installs with recommended defaults.
-    // The standalone install pipeline still fires its own
-    // install.standalone.* funnel events; `express.started` marks WHICH
-    // path the user took, and `express.fallback {reason}` records when
-    // express bailed to Configure (so the funnel can separate
-    // "express succeeded" from "express attempted but fell back").
-    emitTelemetryAction('comfy.desktop.install.express.started', {})
     try {
       const hardware = await window.api.validateHardware()
       if (!hardware.supported) {
         console.warn('[firstUseChain] express: hardware unsupported', hardware)
-        emitTelemetryAction('comfy.desktop.install.express.fallback', {
-          reason: 'unsupported_hardware'
-        })
         return false
       }
 
@@ -345,9 +333,6 @@ export function useFirstUseChain(opts: FirstUseChainOpts): FirstUseChainApi {
       const standalone = sources.find((s: Source) => s.id === 'standalone')
       if (!standalone) {
         console.warn('[firstUseChain] express: standalone source missing', { sources })
-        emitTelemetryAction('comfy.desktop.install.express.fallback', {
-          reason: 'precondition_failed'
-        })
         return false
       }
 
@@ -367,9 +352,6 @@ export function useFirstUseChain(opts: FirstUseChainOpts): FirstUseChainApi {
         )
         if (!options || options.length === 0) {
           console.warn('[firstUseChain] express: no options for field', field.id)
-          emitTelemetryAction('comfy.desktop.install.express.fallback', {
-            reason: 'precondition_failed'
-          })
           return false
         }
         // The starter-template field must never default to a `recommended`
@@ -382,9 +364,6 @@ export function useFirstUseChain(opts: FirstUseChainOpts): FirstUseChainApi {
             ? (options.find((o) => o.value === NO_TEMPLATE_VALUE) ?? options[0])
             : (options.find((o) => o.recommended) ?? options[0])
         if (!pick) {
-          emitTelemetryAction('comfy.desktop.install.express.fallback', {
-            reason: 'precondition_failed'
-          })
           return false
         }
         selections[field.id] = pick
@@ -402,24 +381,8 @@ export function useFirstUseChain(opts: FirstUseChainOpts): FirstUseChainApi {
       })
       if (!result.ok || !result.entry) {
         console.warn('[firstUseChain] express: addInstallation failed', result)
-        emitTelemetryAction('comfy.desktop.install.express.fallback', {
-          reason: 'precondition_failed'
-        })
         return false
       }
-
-      // Reliable "install actually began" gate that pairs 1:1 with
-      // first_use.completed (#1224). The express path skips the wizard, so it
-      // emits the dispatch marker itself rather than relying on the wizard.
-      const variantId = selections.variant?.data?.variantId as string | undefined
-      emitTelemetryAction('comfy.desktop.install.dispatched', {
-        installation_id: result.entry.id,
-        source_id: standalone.id,
-        variant: variantId ? toVariantBucket(variantId) : null,
-        express: true,
-        entrypoint: 'first_use',
-        template_selected: false
-      })
 
       // `onShowProgress` captures `pendingFirstUseAutoLaunchId` from this
       // call because `chainingFirstUseToNewInstall` is already true — the
@@ -428,7 +391,7 @@ export function useFirstUseChain(opts: FirstUseChainOpts): FirstUseChainApi {
       await opts.handleShowProgress({
         installationId: result.entry.id,
         title: `Installing — ${result.entry.name}`,
-        apiCall: () => window.api.installInstance(result.entry!.id, true),
+        apiCall: () => window.api.installInstance(result.entry!.id),
         autoLaunchOnFinish: true,
         opKind: 'install'
       })
@@ -439,7 +402,6 @@ export function useFirstUseChain(opts: FirstUseChainOpts): FirstUseChainApi {
       return true
     } catch (err) {
       console.warn('[firstUseChain] express install failed; falling back to Configure', err)
-      emitTelemetryAction('comfy.desktop.install.express.fallback', { reason: 'error' })
       chainingFirstUseToNewInstall.value = false
       pendingFirstUseAutoLaunchId.value = null
       return false

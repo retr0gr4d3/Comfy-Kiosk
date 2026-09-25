@@ -10,15 +10,10 @@ import type * as FlowSharedModule from '../firebaseBridge/flowShared'
 const h = vi.hoisted(() => ({
   appIsPackaged: false,
   openExternal: vi.fn((_url: string) => Promise.resolve()),
-  capture: vi.fn(),
-  emit: vi.fn(),
-  bucketError: vi.fn(() => 'bucketed'),
-  bindSignedInUser: vi.fn(),
+  signInFailed: vi.fn(),
   showCopyLinkBanner: vi.fn(),
   runBannerCleanup: vi.fn(),
   closeActiveBridge: vi.fn(),
-  settingsGet: vi.fn(),
-  getDeviceId: vi.fn(() => 'machine-hash-1234'),
   createDesktopLoginCode: vi.fn(),
   exchangeDesktopLoginCode: vi.fn(),
   signInWithCustomToken: vi.fn(),
@@ -37,16 +32,6 @@ vi.mock('electron', () => ({
   shell: { openExternal: h.openExternal }
 }))
 
-vi.mock('../../lib/telemetry', () => ({
-  capture: h.capture,
-  emit: h.emit,
-  bucketError: h.bucketError
-}))
-
-vi.mock('../../lib/deviceId', () => ({ getDeviceId: h.getDeviceId }))
-
-vi.mock('../../settings', () => ({ get: h.settingsGet }))
-
 vi.mock('../firebaseBridge/flowState', () => ({
   showCopyLinkBanner: h.showCopyLinkBanner,
   runBannerCleanup: h.runBannerCleanup,
@@ -56,11 +41,20 @@ vi.mock('../firebaseBridge/flowState', () => ({
   }
 }))
 
-vi.mock('../firebaseBridge/flowShared', async (importOriginal) => ({
-  ...(await importOriginal<typeof FlowSharedModule>()),
-  bindSignedInUser: h.bindSignedInUser,
-  POST_SIGNIN_HOLD_MS: 3000
-}))
+vi.mock('../firebaseBridge/flowShared', async (importOriginal) => {
+  const actual = await importOriginal<typeof FlowSharedModule>()
+  return {
+    ...actual,
+    // Records every surfaced failure so tests can tell a reported failure
+    // from a silent supersede.
+    describeSignInFailure: (...args: Parameters<typeof actual.describeSignInFailure>) => {
+      const failure = actual.describeSignInFailure(...args)
+      h.signInFailed(failure)
+      return failure
+    },
+    POST_SIGNIN_HOLD_MS: 3000
+  }
+})
 
 vi.mock('./client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClientModule>()),
@@ -140,7 +134,6 @@ afterEach(() => {
 
 describe('signInViaDesktopLoginCode', () => {
   it('falls back to the legacy bridge when code creation fails, without opening the browser', async () => {
-    h.settingsGet.mockReturnValue(true)
     h.createDesktopLoginCode.mockRejectedValue(new Error('create failed'))
     const mod = await loadOrchestrator()
 
@@ -149,14 +142,11 @@ describe('signInViaDesktopLoginCode', () => {
     expect(outcome).toBe('fallback')
     expect(h.openExternal).not.toHaveBeenCalled()
     expect(h.showCopyLinkBanner).not.toHaveBeenCalled()
-    // The legacy path emits its own funnel events — including its own
-    // sign_in_started, so this path must not have double-counted one.
-    expect(h.capture).not.toHaveBeenCalled()
-    expect(h.emit).not.toHaveBeenCalled()
+    // The legacy path reports its own failures.
+    expect(h.signInFailed).not.toHaveBeenCalled()
   })
 
   it('does not fall back when the view is destroyed before code creation fails', async () => {
-    h.settingsGet.mockReturnValue(true)
     let destroyed = false
     h.createDesktopLoginCode.mockImplementation(async () => {
       destroyed = true
@@ -171,12 +161,10 @@ describe('signInViaDesktopLoginCode', () => {
     expect(outcome).toBe('handled')
     expect(h.openExternal).not.toHaveBeenCalled()
     expect(h.showCopyLinkBanner).not.toHaveBeenCalled()
-    expect(h.capture).not.toHaveBeenCalled()
-    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.signInFailed).not.toHaveBeenCalled()
   })
 
   it('completes the happy path: opens the browser, polls pending→complete, injects the user', async () => {
-    h.settingsGet.mockReturnValue(true)
     h.createDesktopLoginCode.mockResolvedValue(GRANT)
     h.exchangeDesktopLoginCode
       .mockResolvedValueOnce({ status: 'pending' })
@@ -200,23 +188,16 @@ describe('signInViaDesktopLoginCode', () => {
     const outcome = await promise
 
     expect(outcome).toBe('handled')
-    expect(h.capture).toHaveBeenCalledWith('comfy.desktop.auth.sign_in_started', {
-      provider: 'google.com',
-      flow: 'desktop_login_code'
-    })
 
     expect(h.openExternal).toHaveBeenCalledTimes(1)
     const openedUrl = h.openExternal.mock.calls[0]![0]
     expect(openedUrl.startsWith('https://cloud.comfy.org/cloud/login')).toBe(true)
     expect(openedUrl).toContain('desktop_login_code=dlc_test-code')
-    expect(openedUrl).not.toContain('installation_id')
-    expect(openedUrl).not.toContain('machine-hash-1234')
     expect(h.showCopyLinkBanner).toHaveBeenCalledWith(contents, openedUrl)
 
     expect(h.createDesktopLoginCode).toHaveBeenCalledWith(
       'https://cloud.comfy.org',
       expect.objectContaining({
-        installation_id: 'machine-hash-1234',
         platform: process.platform,
         app_version: '1.2.3'
       }),
@@ -239,13 +220,6 @@ describe('signInViaDesktopLoginCode', () => {
     expect(h.signInWithCustomToken).toHaveBeenCalledWith(expect.any(String), 'custom-token-value', {
       signal: expect.any(AbortSignal)
     })
-    // The bind carries the attribution and runs only after injection succeeds.
-    expect(h.bindSignedInUser).toHaveBeenCalledWith(persistedUser, contents, {
-      via: 'desktop_login_code'
-    })
-    expect(h.bindSignedInUser.mock.invocationCallOrder[0]).toBeGreaterThan(
-      contents.mainFrame.executeJavaScript.mock.invocationCallOrder[1]!
-    )
     expect(contents.mainFrame.executeJavaScript).toHaveBeenCalledWith(
       expect.stringContaining('location.reload()'),
       true
@@ -253,7 +227,7 @@ describe('signInViaDesktopLoginCode', () => {
     expect(parentWindow.restore).toHaveBeenCalled()
     expect(parentWindow.show).toHaveBeenCalled()
     expect(parentWindow.focus).toHaveBeenCalled()
-    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.signInFailed).not.toHaveBeenCalled()
     expect(h.runBannerCleanup).toHaveBeenCalled()
     // A stale legacy loopback bridge is torn down before the flow starts.
     expect(h.closeActiveBridge).toHaveBeenCalledTimes(1)
@@ -310,7 +284,7 @@ describe('signInViaDesktopLoginCode', () => {
 
     expect(await promise).toBe('handled')
     expect(h.showCopyLinkBanner).toHaveBeenCalledOnce()
-    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.signInFailed).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -329,10 +303,6 @@ describe('signInViaDesktopLoginCode', () => {
     await vi.runAllTimersAsync()
 
     expect(await promise).toBe('handled')
-    expect(h.capture).toHaveBeenCalledWith('comfy.desktop.auth.sign_in_started', {
-      provider: 'cloud',
-      flow: 'desktop_login_code'
-    })
   })
 
   it('uses production Cloud for a prod sign-in opened from a local ComfyUI view', async () => {
@@ -361,30 +331,8 @@ describe('signInViaDesktopLoginCode', () => {
     )
   })
 
-  it('omits installation_id when telemetry consent is off or undecided', async () => {
-    for (const consent of [false, undefined]) {
-      h.settingsGet.mockReturnValue(consent)
-      h.createDesktopLoginCode.mockResolvedValue(GRANT)
-      h.exchangeDesktopLoginCode.mockResolvedValue({
-        status: 'complete',
-        custom_token: 'custom-token-value'
-      })
-      mockSignInChain({ uid: 'uid-1' })
-      const mod = await loadOrchestrator()
-
-      const promise = mod.signInViaDesktopLoginCode(AUTH_URL, fakeContents(), {})
-      await vi.runAllTimersAsync()
-      await promise
-
-      const request = h.createDesktopLoginCode.mock.lastCall![1] as Record<string, unknown>
-      expect(request).not.toHaveProperty('installation_id')
-      expect(h.getDeviceId).not.toHaveBeenCalled()
-    }
-  })
-
   it('keeps polling through retryable exchange errors', async () => {
     const { DesktopLoginCodeError } = await import('./client')
-    h.settingsGet.mockReturnValue(true)
     h.createDesktopLoginCode.mockResolvedValue(GRANT)
     h.exchangeDesktopLoginCode
       .mockRejectedValueOnce(new DesktopLoginCodeError('server hiccup', { retryable: true }))
@@ -397,15 +345,13 @@ describe('signInViaDesktopLoginCode', () => {
 
     expect(await promise).toBe('handled')
     expect(h.exchangeDesktopLoginCode).toHaveBeenCalledTimes(2)
-    expect(h.bindSignedInUser).toHaveBeenCalled()
-    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.signInFailed).not.toHaveBeenCalled()
   })
 
   it('does not inject the session if the view navigated off the Cloud origin', async () => {
     // The inject script carries the Firebase refresh token into the page's main
     // world. Minutes pass between flow start and injection (browser sign-in +
     // hold), so a view that wandered off-origin must never receive it.
-    h.settingsGet.mockReturnValue(true)
     h.createDesktopLoginCode.mockResolvedValue(GRANT)
     h.exchangeDesktopLoginCode.mockResolvedValue({
       status: 'complete',
@@ -432,14 +378,12 @@ describe('signInViaDesktopLoginCode', () => {
       expect.stringContaining('location.reload()'),
       true
     )
-    expect(h.bindSignedInUser).not.toHaveBeenCalled()
-    expect(h.emit).toHaveBeenCalledWith(
-      'comfy.desktop.auth.sign_in_failed',
+    expect(h.signInFailed).toHaveBeenCalledWith(
       expect.objectContaining({ flow: 'desktop_login_code' })
     )
   })
 
-  it('does not bind or attribute success when session injection fails', async () => {
+  it('reports a failure when session injection fails', async () => {
     h.createDesktopLoginCode.mockResolvedValue(GRANT)
     h.exchangeDesktopLoginCode.mockResolvedValue({
       status: 'complete',
@@ -456,16 +400,13 @@ describe('signInViaDesktopLoginCode', () => {
     await vi.runAllTimersAsync()
 
     expect(await promise).toBe('handled')
-    expect(h.bindSignedInUser).not.toHaveBeenCalled()
-    expect(h.emit).toHaveBeenCalledWith(
-      'comfy.desktop.auth.sign_in_failed',
+    expect(h.signInFailed).toHaveBeenCalledWith(
       expect.objectContaining({ flow: 'desktop_login_code' })
     )
   })
 
   it('fails in place on a terminal exchange error — no legacy restart after the browser opened', async () => {
     const { DesktopLoginCodeError } = await import('./client')
-    h.settingsGet.mockReturnValue(true)
     h.createDesktopLoginCode.mockResolvedValue(GRANT)
     h.exchangeDesktopLoginCode.mockRejectedValue(
       new DesktopLoginCodeError('desktop login code exchange failed: 403', { status: 403 })
@@ -478,29 +419,17 @@ describe('signInViaDesktopLoginCode', () => {
 
     expect(await promise).toBe('handled')
     // error_status carries the HTTP status so a verifier mismatch (403) is
-    // distinguishable from an old backend (404) or a 5xx. Without it every
-    // failure collapses into the same error_class/error_bucket pair.
-    expect(h.emit).toHaveBeenCalledWith('comfy.desktop.auth.sign_in_failed', {
-      provider: 'google.com',
-      error_class: 'DesktopLoginCodeError',
-      error_bucket: 'bucketed',
-      flow: 'desktop_login_code',
-      error_status: 403,
-      retried_poll_errors: 0
-    })
+    // distinguishable from an old backend (404) or a 5xx.
     expect(onError).toHaveBeenCalledWith({
       provider: 'google.com',
       error_class: 'DesktopLoginCodeError',
-      error_bucket: 'bucketed',
       flow: 'desktop_login_code',
       error_status: 403,
       retried_poll_errors: 0
     })
-    expect(h.bindSignedInUser).not.toHaveBeenCalled()
   })
 
-  it('gives up at the expiry deadline with a sign_in_failed event', async () => {
-    h.settingsGet.mockReturnValue(true)
+  it('gives up at the expiry deadline and reports the failure', async () => {
     h.createDesktopLoginCode.mockResolvedValue({
       code: 'dlc_x',
       expires_in: 7,
@@ -517,21 +446,19 @@ describe('signInViaDesktopLoginCode', () => {
     // Polls at t=3s and t=6s; the t=9s wake-up is past the 7s deadline
     // but still makes one final exchange attempt before giving up.
     expect(h.exchangeDesktopLoginCode).toHaveBeenCalledTimes(3)
-    expect(h.emit).toHaveBeenCalledWith(
-      'comfy.desktop.auth.sign_in_failed',
+    expect(h.signInFailed).toHaveBeenCalledWith(
       expect.objectContaining({ flow: 'desktop_login_code' })
     )
     expect(onError).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: 'google.com',
-        error_class: 'unknown',
+        error_class: 'Error',
         flow: 'desktop_login_code'
       })
     )
   })
 
   it('honors a redeem that landed in the last poll interval via a final exchange at the deadline', async () => {
-    h.settingsGet.mockReturnValue(true)
     h.createDesktopLoginCode.mockResolvedValue({
       code: 'dlc_x',
       expires_in: 7,
@@ -554,8 +481,7 @@ describe('signInViaDesktopLoginCode', () => {
     expect(h.signInWithCustomToken).toHaveBeenCalledWith(expect.any(String), 'late-token', {
       signal: expect.any(AbortSignal)
     })
-    expect(h.bindSignedInUser).toHaveBeenCalled()
-    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.signInFailed).not.toHaveBeenCalled()
   })
 
   it('retries a transient mint failure after redemption at the original deadline', async () => {
@@ -584,7 +510,6 @@ describe('signInViaDesktopLoginCode', () => {
   })
 
   it('aborts the prior poll loop on re-entry without reporting a failure', async () => {
-    h.settingsGet.mockReturnValue(true)
     h.createDesktopLoginCode.mockResolvedValue(GRANT)
     h.exchangeDesktopLoginCode.mockResolvedValue({ status: 'pending' })
     const mod = await loadOrchestrator()
@@ -601,7 +526,7 @@ describe('signInViaDesktopLoginCode', () => {
     expect(await first).toBe('handled')
     expect(await second).toBe('fallback')
     // A superseded attempt is not a failure.
-    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.signInFailed).not.toHaveBeenCalled()
 
     // The stale loop is dead: no further polls happen.
     await vi.advanceTimersByTimeAsync(30_000)
@@ -609,7 +534,6 @@ describe('signInViaDesktopLoginCode', () => {
   })
 
   it('cancels a prior code flow before falling back to the legacy bridge', async () => {
-    h.settingsGet.mockReturnValue(true)
     h.createDesktopLoginCode.mockResolvedValue(GRANT)
     h.exchangeDesktopLoginCode.mockResolvedValue({ status: 'pending' })
     const mod = await loadOrchestrator()
@@ -628,11 +552,10 @@ describe('signInViaDesktopLoginCode', () => {
     expect(await first).toBe('handled')
     await vi.advanceTimersByTimeAsync(30_000)
     expect(h.exchangeDesktopLoginCode).toHaveBeenCalledTimes(1)
-    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.signInFailed).not.toHaveBeenCalled()
   })
 
   it('performs no tail side-effects when superseded after the exchange completed', async () => {
-    h.settingsGet.mockReturnValue(true)
     h.createDesktopLoginCode.mockResolvedValue(GRANT)
     h.exchangeDesktopLoginCode.mockResolvedValue({
       status: 'complete',
@@ -669,16 +592,14 @@ describe('signInViaDesktopLoginCode', () => {
     expect(await first).toBe('handled')
     expect(await second).toBe('fallback')
 
-    // The superseded flow ran none of its tail: no lookup, no identity
-    // bind/attribution, no inject, no focus steal...
+    // The superseded flow ran none of its tail: no lookup, no inject, no focus steal...
     expect(h.lookupAccount).not.toHaveBeenCalled()
-    expect(h.bindSignedInUser).not.toHaveBeenCalled()
     expect(contents.mainFrame.executeJavaScript).not.toHaveBeenCalled()
     expect(parentWindow.focus).not.toHaveBeenCalled()
     // ...and did not tear down the newer flow's banner on the way out.
     expect(h.runBannerCleanup).toHaveBeenCalledTimes(bannerCleanupsAfterSecondStart)
     // A superseded attempt is not a failure.
-    expect(h.emit).not.toHaveBeenCalled()
+    expect(h.signInFailed).not.toHaveBeenCalled()
   })
 
   it('falls back immediately for a dev-project auth URL on the production Cloud origin', async () => {
@@ -695,12 +616,9 @@ describe('signInViaDesktopLoginCode', () => {
     expect(outcome).toBe('fallback')
     expect(h.createDesktopLoginCode).not.toHaveBeenCalled()
     expect(h.openExternal).not.toHaveBeenCalled()
-    // The legacy path emits its own sign_in_started.
-    expect(h.capture).not.toHaveBeenCalled()
   })
 
   it('runs the code flow for a dev-project auth URL when the view is on a loopback dev origin', async () => {
-    h.settingsGet.mockReturnValue(true)
     h.createDesktopLoginCode.mockResolvedValue(GRANT)
     h.exchangeDesktopLoginCode.mockResolvedValue({
       status: 'complete',

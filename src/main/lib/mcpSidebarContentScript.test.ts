@@ -17,13 +17,11 @@ describe('getMcpSidebarContentScript', () => {
   }
 
   const installBridge = (): {
-    capture: ReturnType<typeof vi.fn>
     openMcpSetup: ReturnType<typeof vi.fn>
   } => {
-    const capture = vi.fn()
     const openMcpSetup = vi.fn(() => Promise.resolve(true))
-    Reflect.set(window, '__comfyDesktop2', { openMcpSetup, Telemetry: { capture } })
-    return { capture, openMcpSetup }
+    Reflect.set(window, '__comfyDesktop2', { openMcpSetup })
+    return { openMcpSetup }
   }
 
   beforeEach(() => {
@@ -50,7 +48,7 @@ describe('getMcpSidebarContentScript', () => {
   })
 
   it('injects nothing when the desktop MCP-setup opener is absent', () => {
-    Reflect.set(window, '__comfyDesktop2', { Telemetry: { capture: vi.fn() } })
+    Reflect.set(window, '__comfyDesktop2', {})
     setupDom()
     new Function(script)()
     expect(
@@ -98,13 +96,12 @@ describe('getMcpSidebarContentScript', () => {
   })
 
   it('opens the modal on click, clears the dot, and persists seen', () => {
-    const { openMcpSetup, capture } = installBridge()
+    const { openMcpSetup } = installBridge()
     setupDom()
     new Function(script)()
     document.getElementById('comfy-desktop-mcp-btn')?.click()
 
     expect(openMcpSetup).toHaveBeenCalledOnce()
-    expect(capture).toHaveBeenCalledWith('comfy.desktop.mcp.sidebar_opened', {})
     expect(window.localStorage.getItem('comfyDesktopMcpSeen')).toBe('1')
     const dot = document.querySelector<HTMLElement>('#comfy-desktop-mcp-btn .comfy-mcp-dot')
     expect(dot?.style.display).toBe('none')

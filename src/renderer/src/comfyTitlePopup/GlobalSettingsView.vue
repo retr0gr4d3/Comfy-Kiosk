@@ -38,7 +38,7 @@ interface Snapshot {
   highlightFieldId?: string | null
   languageFields: Record<string, unknown>[]
   generalFields: Record<string, unknown>[]
-  telemetryFields: Record<string, unknown>[]
+  betaFields: Record<string, unknown>[]
   desktopUpdateFields: Record<string, unknown>[]
   cacheFields: Record<string, unknown>[]
   advancedFields: Record<string, unknown>[]
@@ -46,8 +46,6 @@ interface Snapshot {
   installLocationFields: Record<string, unknown>[]
   modelsDirs: ModelsDir[]
   modelsSystemDefault: string
-  /** Explicit telemetry consent. Gates opting into beta features. */
-  telemetryGranted: boolean
   appUpdate: {
     state: Record<string, unknown>
     progress: Record<string, unknown> | null
@@ -180,23 +178,8 @@ const languageSections = computed<DetailSection[]>(() => [
 const generalSections = computed<DetailSection[]>(() => [
   { fields: props.snapshot.generalFields as unknown as DetailField[] }
 ])
-/** Opting in is gated on telemetry consent (opting *out* never is), and consent
- *  is live snapshot state rather than a property of the settings field — so the
- *  gate is derived here instead of main-side, where `toDetailField` would have
- *  to learn about it. */
-const BETA_FEATURES_FIELD_ID = 'betaFeaturesEnabled'
-const telemetrySections = computed<DetailSection[]>(() => [
-  {
-    fields: (props.snapshot.telemetryFields as unknown as DetailField[]).map((field) =>
-      field.id === BETA_FEATURES_FIELD_ID
-        ? {
-            ...field,
-            turnOnDisabled: !props.snapshot.telemetryGranted,
-            turnOnDisabledTooltipKey: 'tooltips.betaFeaturesNeedTelemetry'
-          }
-        : field
-    )
-  }
+const betaSections = computed<DetailSection[]>(() => [
+  { fields: props.snapshot.betaFields as unknown as DetailField[] }
 ])
 const desktopUpdatePreferenceFields = computed<DetailField[]>(
   () => props.snapshot.desktopUpdateFields as unknown as DetailField[]
@@ -386,9 +369,9 @@ onMounted(() => {
             />
           </GlobalSettingsMicroSection>
 
-          <GlobalSettingsMicroSection :title="t('settings.privacy', 'Privacy')">
+          <GlobalSettingsMicroSection :title="t('settings.beta', 'Beta')">
             <SettingsSectionList
-              :sections="telemetrySections"
+              :sections="betaSections"
               @update-field="handleUpdateField"
               @open-path="handleOpenPath"
             />

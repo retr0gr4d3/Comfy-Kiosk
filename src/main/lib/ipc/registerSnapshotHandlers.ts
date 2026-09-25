@@ -34,7 +34,6 @@ import {
 } from './shared'
 import type { LatestTagOverride, SnapshotExportEnvelope, FieldOption, Snapshot } from './shared'
 import type { CopyEvent } from '../../../types/ipc'
-import * as telemetry from '../telemetry'
 import { DEFAULT_INSTALL_NAME } from '../../../shared/defaultInstallName'
 import { resolveSnapshotManagedTarget } from '../../sources/standalone/torchStackCatalog'
 import { torchTupleMatches } from '../../sources/standalone/torchStackTypes'
@@ -266,15 +265,6 @@ export function registerSnapshotHandlers(): void {
     })
     if (canceled || !filePath) return { ok: false }
     await fs.promises.writeFile(filePath, JSON.stringify(envelope, null, 2))
-    // Fire only after the file is actually written — a cancelled save
-    // dialog returns above, so this never counts cancels. Pairs with the
-    // existing snapshot.created / .imported / .restore_* events so the
-    // Snapshots dashboard can show the full create → share → import loop.
-    telemetry.emit('comfy.desktop.snapshot.shared', {
-      installation_id: installationId,
-      scope: 'latest',
-      trigger: snapshot.trigger
-    })
     return { ok: true }
   })
 
@@ -294,11 +284,6 @@ export function registerSnapshotHandlers(): void {
     })
     if (canceled || !filePath) return { ok: false }
     await fs.promises.writeFile(filePath, JSON.stringify(envelope, null, 2))
-    telemetry.emit('comfy.desktop.snapshot.shared', {
-      installation_id: installationId,
-      scope: 'all',
-      count: entries.length
-    })
     return { ok: true }
   })
 

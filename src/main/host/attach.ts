@@ -4,22 +4,12 @@ import { attachSessionDownloadHandler } from '../lib/comfyDownloadManager'
 import { getModelDownloadContentScript } from '../lib/comfyContentScript'
 import { getComfyTerminalContentScript } from '../lib/comfyTerminalContentScript'
 import { getMcpSidebarContentScript } from '../lib/mcpSidebarContentScript'
-import { getFlagAsync, recordExposure } from '../lib/experiments'
+import { getMcpSidebarEnabledAsync } from '../lib/mcpSidebarFlag'
 import { closeInstallPopouts } from '../lib/popoutWindows'
 import { _operationAborts, sourceMap } from '../lib/ipc/shared'
 import { readableSymbolColor } from '../lib/theme'
-import * as mainTelemetry from '../lib/telemetry'
 import { refreshCloudUserTier } from '../lib/userTier'
-import { refreshStaffFlagTargeting } from '../lib/staffFlagTargeting'
-import { noteCloudEntered } from '../lib/cloudEntry'
-import { noteCanvasRendered } from '../lib/canvasEntry'
-import { forwardDatadogError } from '../lib/processErrorHandlers'
 import { recordInstanceSurface } from '../lib/lastSession'
-import {
-  activateFirebaseAuthReporter,
-  deactivateFirebaseAuthReporter
-} from '../lib/firebaseAuthIdentity'
-import { convertLevelToZoomPercent } from '../lib/zoom'
 import {
   clearPendingTemplateOpen,
   installationEvents,
@@ -44,9 +34,6 @@ const APP_VERSION = getAppVersion()
  *  external (legacy v1 desktop) installs do not. */
 const TERMINAL_INJECTION_SOURCE_IDS = new Set(['standalone', 'portable', 'git'])
 
-/** PostHog flag gating the Local MCP sidebar icon. */
-const MCP_SIDEBAR_FLAG = 'mcp_sidebar_enabled'
-
 /** Allow MCP sidebar inject only if attach is active, flag is enabled, and view is not destroyed. */
 export function shouldInjectMcpSidebar(state: {
   attachActive: boolean
@@ -55,13 +42,6 @@ export function shouldInjectMcpSidebar(state: {
 }): boolean {
   return state.attachActive && state.enabled && !state.destroyed
 }
-
-/** Entry point that triggered a zoom reset, tagged as `source` on the
- *  `comfy.desktop.zoom.reset` telemetry event. `titlebar` (the zoom pill)
- *  and `menu` (the title menu's "Reset Zoom") flow through the per-install
- *  `comfyZoomResets` closure; `shortcut` (Ctrl/Cmd + 0) emits directly from
- *  the key handler. */
-export type ZoomResetSource = 'titlebar' | 'menu' | 'shortcut'
 
 /** Lifecycle-state maps owned by `index.ts` that `attachInstall` and the
  *  related relaunch flow both touch. Late-bound via
@@ -78,11 +58,10 @@ export interface AttachFactories {
   comfyReloads: Map<string, () => void>
   /** Per-install comfyView zoom reset (→ 100%). Registered on attach,
    *  cleared on detach. Lets both the title-bar zoom pill and the title
-   *  menu's "Reset Zoom" entry reset the live comfyContents, push the
-   *  `comfy-titlebar:zoom-changed` update so the pill clears, and emit the
-   *  matching `comfy.desktop.zoom.reset` telemetry (`source` tags which
-   *  entry point) without lifting the closure. */
-  comfyZoomResets: Map<string, (source: ZoomResetSource) => void>
+   *  menu's "Reset Zoom" entry reset the live comfyContents and push the
+   *  `comfy-titlebar:zoom-changed` update so the pill clears, without
+   *  lifting the closure. */
+  comfyZoomResets: Map<string, () => void>
   /** Per-install relaunch state. Keys present in this map gate every
    *  attach-side reload path so a relaunch-in-progress install can't
    *  be auto-retried out from under the splash. */
@@ -133,25 +112,14 @@ export function attachInstall(entry: ComfyWindowEntry, opts: AttachInstallOpts):
     // Defensive — every current call site already gates with
     // `isChooserHost(entry)`, but a future caller that forgets
     // the guard would otherwise take down the entire launch flow
-    // with an uncaught exception in main. Surface the violation
-    // to telemetry and let the caller fall back (the install-
+    // with an uncaught exception in main. Log the violation
+    // and let the caller fall back (the install-
     // backed wrapper destroys the just-created host; the claim
     // path skips the in-place attach and the wrapper recovers).
     const message =
       `attachInstall: entry windowKey=${entry.windowKey} is already attached to ` +
       `installationId=${entry.installationId}; detach first`
     console.error(message)
-    forwardDatadogError({
-      source: 'attach-install-already-attached',
-      message,
-      level: 'error',
-      context: {
-        origin: 'main-process',
-        windowKey: String(entry.windowKey),
-        existingInstallationId: entry.installationId,
-        attemptedInstallationId: opts.installation.id
-      }
-    })
     return false
   }
   const fx = getFactories()
@@ -160,7 +128,6 @@ export function attachInstall(entry: ComfyWindowEntry, opts: AttachInstallOpts):
   const comfyContents = entry.comfyView.webContents
   const comfyWindow = entry.window
   const titleBarView = entry.titleBarView
-  activateFirebaseAuthReporter(comfyContents)
 
   // Seed entry install state. The secondary index is the source of
   // truth for `getEntryByInstallationId(id)` — keep it in lockstep
@@ -440,52 +407,28 @@ export function attachInstall(entry: ComfyWindowEntry, opts: AttachInstallOpts):
     // `comfyTerminalContentScript.ts` for the dedupe guard.
     if (isLocal && TERMINAL_INJECTION_SOURCE_IDS.has(installation.sourceId)) {
       comfyContents.executeJavaScript(getComfyTerminalContentScript()).catch(() => {})
-      // Local MCP sidebar icon, flag-gated. `getFlagAsync` awaits the in-flight
-      // boot fetch so a cold start (empty cache) still resolves the flag before
-      // the gate decides; a sync read here would see the not-yet-populated cache
-      // and never inject. Re-check the view is alive after the await.
+      // Local MCP sidebar icon, flag-gated (see `mcpSidebarFlag.ts`). The
+      // accessor awaits the boot read; re-check the view is alive after it.
       void (async () => {
-        const enabled = (await getFlagAsync(MCP_SIDEBAR_FLAG)) === true
+        const enabled = await getMcpSidebarEnabledAsync()
         // The await can outlive the attach — see `shouldInjectMcpSidebar`.
         if (
           !shouldInjectMcpSidebar({ attachActive, enabled, destroyed: comfyContents.isDestroyed() })
         ) {
           return
         }
-        recordExposure(MCP_SIDEBAR_FLAG, 'enabled', 'cache')
         comfyContents.executeJavaScript(getMcpSidebarContentScript()).catch(() => {})
       })()
     }
-    // Offer this view as a classifier for ops-flag person targeting. A RETRY path, not the
-    // trigger: the classification is driven by the identity consensus, which reclassifies as
-    // soon as any view reports a change. This covers the case where the consensus resolved while
-    // the views it asked could not answer, and is a no-op otherwise. Deliberately OUTSIDE the
-    // `!isLocal` branch below: the grant these flags carry is consumed only by the local launch
-    // path (`buildLaunchArgs`), since a cloud install spawns no Core — so binding on cloud views
-    // alone would cover every surface except the one that can use the result. Fire-and-forget;
-    // only a boolean is stored, and sending it is consent-gated in telemetry.
-    void refreshStaffFlagTargeting(comfyContents)
-
     // Cloud-only patches (popup-blocked toast suppression + post-signin
     // flicker hide). Skipped for local installs — they don't load cloud
     // frontend, never see the toast or the redirect flash.
     if (!isLocal) {
       comfyContents.executeJavaScript(COMFY_CLOUD_PATCHES_JS).catch(() => {})
       // Refresh the cached subscription tier off the cloud view's
-      // Firebase auth record + /customers/me. Used by billing telemetry
-      // and free-tier offer UI. Fire-and-forget — failures leave the tier
-      // cache as-is.
+      // Firebase auth record + /customers/me. Used by the free-tier offer
+      // UI. Fire-and-forget — failures leave the tier cache as-is.
       void refreshCloudUserTier(comfyContents)
-      // Mark cloud entry for the acquisition funnel. Deduped per session
-      // and carries `first_time` for the first-ever cloud entry.
-      noteCloudEntered()
-    } else {
-      // Local counterpart to `noteCloudEntered`: the bottom of the
-      // install→canvas funnel. The page reaching dom-ready is the first
-      // moment the user can see the workflow canvas. Deduped per launch
-      // (reloads / re-attaches don't re-fire) and carries
-      // `server_ready_to_canvas_ms` for the provisioning-time funnel.
-      noteCanvasRendered(installationId)
     }
   }
   comfyContents.on('dom-ready', onDomReady)
@@ -536,14 +479,8 @@ export function attachInstall(entry: ComfyWindowEntry, opts: AttachInstallOpts):
       e.preventDefault()
       if (comfyContents.isDestroyed()) return
       if (input.key === '0') {
-        const previousLevel = comfyContents.getZoomLevel()
         comfyContents.setZoomLevel(0)
         pushZoom()
-        // Only emit when this was a real reset (skip no-op presses at 1x)
-        // so the event count tracks actual recovery actions, not key-spam.
-        if (previousLevel !== 0) {
-          emitZoomReset('shortcut', previousLevel)
-        }
         return
       }
       const step = input.key === '-' ? -0.5 : 0.5
@@ -560,18 +497,6 @@ export function attachInstall(entry: ComfyWindowEntry, opts: AttachInstallOpts):
   const onZoomChanged = (): void => pushZoom()
   comfyContents.on('zoom-changed', onZoomChanged)
 
-  // One emit site for `comfy.desktop.zoom.reset` so every entry point (zoom
-  // pill, title menu, Ctrl/Cmd + 0) shares the payload shape and a typed `source`.
-  const emitZoomReset = (source: ZoomResetSource, previousLevel: number): void => {
-    mainTelemetry.emit('comfy.desktop.zoom.reset', {
-      source,
-      parent_entry_id: entry.windowKey,
-      installation_id: entry.installationId,
-      previous_zoom_level: previousLevel,
-      previous_zoom_percent: convertLevelToZoomPercent(previousLevel)
-    })
-  }
-
   // Failure retry — backoff on did-fail-load that isn't aborted /
   // mid-relaunch. Per-install timer cancel registered into the
   // shared map so onModelFolderRelaunch can interrupt a pending
@@ -585,13 +510,11 @@ export function attachInstall(entry: ComfyWindowEntry, opts: AttachInstallOpts):
   }
   fx.comfyFailRetryTimerCancels.set(installationId, cancelFailRetry)
   fx.comfyReloads.set(installationId, reloadComfy)
-  fx.comfyZoomResets.set(installationId, (source) => {
+  fx.comfyZoomResets.set(installationId, () => {
     if (comfyContents.isDestroyed()) return
-    const previousLevel = comfyContents.getZoomLevel()
-    if (previousLevel === 0) return
+    if (comfyContents.getZoomLevel() === 0) return
     comfyContents.setZoomLevel(0)
     pushZoom()
-    emitZoomReset(source, previousLevel)
   })
   const onDidFailLoad = (
     _e: Electron.Event,
@@ -603,13 +526,6 @@ export function attachInstall(entry: ComfyWindowEntry, opts: AttachInstallOpts):
     if (!isMainFrame || code === -3 || failRetryTimer) return
     const id = entry.installationId
     if (id === null) return
-    // Local install's main-frame load failed to reach the canvas. Record it
-    // as the failed leg of the install→canvas funnel (bypasses the
-    // first-render dedup — a failed load is a distinct signal). Cloud loads
-    // have their own paths and are excluded here.
-    if (isLocal) {
-      noteCanvasRendered(id, { loadFailed: true })
-    }
     if (fx.relaunchStates.has(id)) return
     failRetryTimer = setTimeout(() => {
       failRetryTimer = null
@@ -627,17 +543,10 @@ export function attachInstall(entry: ComfyWindowEntry, opts: AttachInstallOpts):
     _event: Electron.Event,
     details: Electron.RenderProcessGoneDetails
   ): void => {
-    forwardDatadogError({
-      source: 'comfy-window-render-process-gone',
-      message: `Comfy window renderer process exited (${details.reason})`,
-      level: 'error',
-      context: {
-        origin: 'main-process',
-        installationId: entry.installationId ?? '(detached)',
-        reason: details.reason,
-        exitCode: details.exitCode
-      }
-    })
+    console.error(
+      `Comfy window renderer process exited (${details.reason}, exit ${details.exitCode}) ` +
+        `for ${entry.installationId ?? '(detached)'}; reloading`
+    )
     reloadComfy()
   }
   comfyContents.on('render-process-gone', onRenderProcessGone)
@@ -674,7 +583,6 @@ export function attachInstall(entry: ComfyWindowEntry, opts: AttachInstallOpts):
     // Retire async work still pending from this attach so a late resolution
     // can't touch a detached or re-attached view.
     attachActive = false
-    deactivateFirebaseAuthReporter(comfyContents)
     installationEvents.off('updated', onInstallationUpdated)
     cancelFailRetry()
     if (!comfyContents.isDestroyed()) {

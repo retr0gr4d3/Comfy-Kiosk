@@ -2,13 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
-import {
-  getSafeFileDiagnostics,
-  readFileSafe,
-  readFileSafeAsync,
-  writeFileSafe,
-  writeFileSafeAsync
-} from './safe-file'
+import { readFileSafe, readFileSafeAsync, writeFileSafe, writeFileSafeAsync } from './safe-file'
 
 /**
  * Pins the `.bak` semantics that keep the startup-update loop-breaker marker
@@ -171,13 +165,9 @@ describe('readFileSafe', () => {
     expect(readFileSafe(filePath)).toEqual({ kind: 'data', data: 'backup' })
   })
 
-  it('restores .bak over a genuinely missing primary and counts the fallback', () => {
+  it('restores .bak over a genuinely missing primary', () => {
     fs.writeFileSync(bakPath, 'backup')
-    // The counter is process-wide and monotonic, so assert the delta - it is
-    // the field signal (telemetry `bakFallbacks`) for issue #1367 machines.
-    const before = getSafeFileDiagnostics().bakFallbacks
     expect(readFileSafe(filePath)).toEqual({ kind: 'data', data: 'backup' })
-    expect(getSafeFileDiagnostics().bakFallbacks).toBe(before + 1)
     expect(fs.readFileSync(filePath, 'utf-8')).toBe('backup')
   })
 
@@ -251,11 +241,9 @@ describe('readFileSafeAsync', () => {
     expect(fs.readFileSync(filePath, 'utf-8')).toBe('newer primary')
   })
 
-  it('restores .bak over a genuinely missing primary and counts the fallback', async () => {
+  it('restores .bak over a genuinely missing primary', async () => {
     fs.writeFileSync(bakPath, 'backup')
-    const before = getSafeFileDiagnostics().bakFallbacks
     expect(await readFileSafeAsync(filePath)).toEqual({ kind: 'data', data: 'backup' })
-    expect(getSafeFileDiagnostics().bakFallbacks).toBe(before + 1)
     expect(fs.readFileSync(filePath, 'utf-8')).toBe('backup')
   })
 

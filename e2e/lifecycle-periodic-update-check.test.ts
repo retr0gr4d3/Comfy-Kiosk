@@ -74,7 +74,7 @@ test.beforeAll(async () => {
   process.env['E2E_PERIODIC_RECHECK_MS'] = String(PERIODIC_INTERVAL_MS)
   try {
     ctx = await launchApp({
-      settings: { firstUseCompleted: true, telemetryEnabled: false },
+      settings: { firstUseCompleted: true },
       installations: [
         {
           id: INSTALL_ID,

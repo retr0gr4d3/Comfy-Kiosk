@@ -6,7 +6,6 @@ import { useI18n } from 'vue-i18n'
 import { useModal } from '../composables/useModal'
 import { useActionGuard } from '../composables/useActionGuard'
 import { ChevronDown } from 'lucide-vue-next'
-import { emitTelemetryAction, toCountBucket } from '../lib/telemetry'
 import SnapshotInspector from './SnapshotInspector.vue'
 import RestoreModal from './RestoreModal.vue'
 import ImportPreviewModal from './ImportPreviewModal.vue'
@@ -17,7 +16,6 @@ import {
   formatRelative as _formatRelative,
   copyReasonLabel as _copyReasonLabel,
   changeSummary as _changeSummary,
-  diffHasChanges,
   isDisplayableLabel
 } from '../lib/snapshots'
 import type {
@@ -185,10 +183,6 @@ async function saveSnapshot(): Promise<void> {
     })
     return
   }
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'save',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length)
-  })
   selectedFilename.value = null
   detail.value = null
   diffData.value = null
@@ -213,11 +207,6 @@ async function handleRestore(filename: string): Promise<void> {
   } finally {
     restorePreviewLoading.value = false
   }
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'restore_start',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length),
-    has_diff: restorePreviewDiff.value ? diffHasChanges(restorePreviewDiff.value.diff) : undefined
-  })
 }
 
 function cancelRestore(): void {
@@ -227,9 +216,6 @@ function cancelRestore(): void {
 }
 
 async function confirmRestore(): Promise<void> {
-  const hasDiff = restorePreviewDiff.value
-    ? diffHasChanges(restorePreviewDiff.value.diff)
-    : undefined
   let filename = restorePreviewFilename.value
   let restoreToken: string | null = null
 
@@ -269,11 +255,6 @@ async function confirmRestore(): Promise<void> {
       })
       if (!proceed) return
     }
-    emitTelemetryAction('comfy.desktop.snapshot.flow', {
-      action: 'import',
-      snapshot_count_bucket: toCountBucket(snapshots.value.length),
-      imported_bucket: toCountBucket(result.imported ?? 0)
-    })
     // Nothing landed in the live history yet; don't reload until the restore
     // commits it on success.
     restoreToken = result.restoreToken ?? null
@@ -293,11 +274,6 @@ async function confirmRestore(): Promise<void> {
     progressTitle: t('standalone.snapshotRestoringTitle'),
     cancellable: true
   }
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'restore_complete',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length),
-    has_diff: hasDiff
-  })
   emit('run-action', action, null)
 }
 
@@ -308,10 +284,6 @@ async function handleDelete(filename: string): Promise<void> {
   })
   if (!confirmed) return
   await window.api.runAction(props.installationId, 'snapshot-delete', { file: filename })
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'delete',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length)
-  })
   if (selectedFilename.value === filename) {
     selectedFilename.value = null
     detail.value = null
@@ -324,18 +296,10 @@ async function handleDelete(filename: string): Promise<void> {
 
 async function handleExport(filename: string): Promise<void> {
   await window.api.exportSnapshot(props.installationId, filename)
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'export_one',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length)
-  })
 }
 
 async function handleExportAll(): Promise<void> {
   await window.api.exportAllSnapshots(props.installationId)
-  emitTelemetryAction('comfy.desktop.snapshot.flow', {
-    action: 'export_all',
-    snapshot_count_bucket: toCountBucket(snapshots.value.length)
-  })
 }
 
 async function handleImport(): Promise<void> {

@@ -2,7 +2,6 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Check, Volume2, VolumeX, X } from 'lucide-vue-next'
-import { emitTelemetryAction } from '../lib/telemetry'
 
 /**
  * One-off announcement modal (currently the Comfy Router launch).
@@ -14,14 +13,8 @@ import { emitTelemetryAction } from '../lib/telemetry'
  * Strings live in `announcement.comfyRouter.*` (locales/en.json).
  */
 
-// Announcement id, carried in telemetry so this component can be reused for a
-// future announcement by swapping the id + copy.
-const ANNOUNCEMENT_ID = 'comfy_router'
-
-// CTA destination. The UTM tags clicks as Desktop-origin so they're
-// attributable in analytics.
-const UTM = '?utm_source=comfy_desktop&utm_medium=announcement&utm_campaign=comfy_router'
-const PRIMARY_CTA_URL = `https://comfy.org/platform/router${UTM}`
+// CTA destination.
+const PRIMARY_CTA_URL = 'https://comfy.org/platform/router'
 
 // Router launch hero on media.comfy.org. media.comfy.org caches for an hour, so
 // bump the version in the filename rather than re-uploading a key. Poster paints
@@ -49,20 +42,14 @@ function toggleSound(): void {
   v.muted = !v.muted
   isMuted.value = v.muted
   if (!v.muted) void v.play().catch(() => {})
-  emitTelemetryAction('comfy.desktop.announcement.sound_toggled', {
-    id: ANNOUNCEMENT_ID,
-    muted: v.muted
-  })
 }
 // Element focused before open; restored on close to return focus to the trigger.
 let returnFocusTo: HTMLElement | null = null
 
 function dismiss(): void {
-  emitTelemetryAction('comfy.desktop.announcement.dismissed', { id: ANNOUNCEMENT_ID })
   emit('close')
 }
-function openCta(cta: string, url: string): void {
-  emitTelemetryAction('comfy.desktop.announcement.cta_clicked', { id: ANNOUNCEMENT_ID, cta })
+function openCta(url: string): void {
   window.api?.openExternal?.(url)
 }
 
@@ -78,7 +65,6 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 onMounted(() => {
-  emitTelemetryAction('comfy.desktop.announcement.shown', { id: ANNOUNCEMENT_ID })
   document.addEventListener('keydown', onKeydown)
   returnFocusTo = document.activeElement instanceof HTMLElement ? document.activeElement : null
   // Focus the dialog container, not a button. Traps focus without a ring on open.
@@ -161,7 +147,7 @@ onUnmounted(() => {
                   class="brand-primary"
                   type="button"
                   data-testid="announcement-primary-cta"
-                  @click="openCta('learn_more', PRIMARY_CTA_URL)"
+                  @click="openCta(PRIMARY_CTA_URL)"
                 >
                   {{ $t('announcement.comfyRouter.primaryCta') }}
                 </button>

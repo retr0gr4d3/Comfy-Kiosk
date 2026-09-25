@@ -6,7 +6,6 @@ import { isSafePathComponent } from '../cnr'
 import { isValidAmdMultiArchSource } from '../../sources/standalone/torchStackTypes'
 import type { TorchStackPackages } from '../../sources/standalone/torchStackTypes'
 import { snapshotsDir, formatTimestamp } from './store'
-import * as telemetry from '../telemetry'
 import { VALID_PIP_NAME } from '../pip'
 import type { Snapshot, SnapshotEntry, SnapshotExportEnvelope } from './types'
 
@@ -167,8 +166,7 @@ export function validateExportEnvelope(data: unknown): SnapshotExportEnvelope {
  */
 export async function importSnapshots(
   installPath: string,
-  envelope: SnapshotExportEnvelope,
-  installationId: string
+  envelope: SnapshotExportEnvelope
 ): Promise<{ imported: number; filenames: string[] }> {
   const dir = snapshotsDir(installPath)
   await fs.promises.mkdir(dir, { recursive: true })
@@ -199,25 +197,6 @@ export async function importSnapshots(
       throw err
     }
     filenames.push(filename)
-
-    // Per-snapshot emit (not a single batch event) so the trigger / size
-    // distribution of imported snapshots is queryable the same way as
-    // `comfy.desktop.snapshot.created`. `batch_size` + `batch_index` let dashboards
-    // recover the import-operation grouping when they care about it.
-    //
-    // Distinct event from `comfy.desktop.snapshot.created` because the snapshot
-    // wasn't *taken* on this install — it was copied in from an export
-    // envelope (manual import or standalone migration), and we want the
-    // "how often does an install snapshot itself" metric to stay clean.
-    telemetry.emit('comfy.desktop.snapshot.imported', {
-      installation_id: installationId,
-      original_trigger: snapshot.trigger,
-      custom_nodes_count: snapshot.customNodes.length,
-      pip_packages_count: Object.keys(snapshot.pipPackages).length,
-      has_label: !!(snapshot.label && snapshot.label.length > 0),
-      batch_size: count,
-      batch_index: i
-    })
   }
 
   return { imported: filenames.length, filenames }

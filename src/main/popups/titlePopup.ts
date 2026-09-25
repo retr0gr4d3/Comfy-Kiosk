@@ -13,7 +13,6 @@ import {
   retryDownload
 } from '../lib/comfyDownloadManager'
 import { installationEvents } from '../installations'
-import * as mainTelemetry from '../lib/telemetry'
 import * as updater from '../lib/updater'
 import * as i18n from '../lib/i18n'
 import * as settings from '../settings'
@@ -140,7 +139,7 @@ export interface InstancePickerSnapshot {
    *  navigation matrix (`decideNavigation`). `'cloud'` covers cloud AND remote. */
   currentView: ViewKind
   /** Raw `sourceCategory` of the active install (`null` on a dashboard host).
-   *  Carried verbatim for copy/telemetry; navigation collapses it via `navClass`. */
+   *  Carried verbatim for copy; navigation collapses it via `navClass`. */
   currentCategory: Category | null
   runningInstallationIds: string[]
   /** Installs mid-launch — `instance-launching` fired, `instance-started`
@@ -215,7 +214,7 @@ export interface GlobalSettingsSnapshot {
   highlightFieldId: string | null
   languageFields: Record<string, unknown>[]
   generalFields: Record<string, unknown>[]
-  telemetryFields: Record<string, unknown>[]
+  betaFields: Record<string, unknown>[]
   desktopUpdateFields: Record<string, unknown>[]
   cacheFields: Record<string, unknown>[]
   advancedFields: Record<string, unknown>[]
@@ -225,10 +224,6 @@ export interface GlobalSettingsSnapshot {
   installLocationFields: Record<string, unknown>[]
   modelsDirs: GlobalSettingsModelsDir[]
   modelsSystemDefault: string
-  /** Whether telemetry consent was explicitly granted. Top-level rather than
-   *  a `DetailField` because it gates OTHER fields (opting into beta features
-   *  requires consent) instead of being edited itself. */
-  telemetryGranted: boolean
   appUpdate: {
     state: Record<string, unknown>
     progress: Record<string, unknown> | null
@@ -1616,7 +1611,7 @@ export interface TitlePopupHostBindings {
   /** Switch the host's body to the named panel (settings, new-install, ...). */
   setActivePanel: (windowKey: number, panel: ComfyPanelKey) => void
   /** Forward a Send Feedback request to the host's panel renderer. */
-  triggerOpenFeedback: (entryId: number, source: 'titlebar' | 'menu') => void
+  triggerOpenFeedback: (entryId: number) => void
   /** Reset the host install's comfyView zoom to 100%. Routes through the
    *  same per-install closure (`comfyZoomResets`) the title-bar zoom pill
    *  uses, so the menu path also pushes `comfy-titlebar:zoom-changed` and
@@ -1960,17 +1955,6 @@ export function activateTitlePopupMenuItem(
   id: string,
   bindings: TitlePopupHostBindings
 ): void {
-  // Capture the click in main so the title-menu popup itself doesn't need
-  // to bootstrap Datadog RUM / PostHog Browser (it's a transient view that
-  // would mint a fresh session per open). PostHog Node captures here and
-  // forwardToRenderer relays to the title-bar Datadog RUM session for the
-  // parent host window — see `forwardToRenderer` + the relay-target
-  // registry in `lib/telemetry.ts`.
-  mainTelemetry.emit('comfy.desktop.title_menu.item_clicked', {
-    item_id: id,
-    menu_kind: entry.kind,
-    parent_entry_id: entry.parentEntryId
-  })
   // Default: re-focus the popup's parent on dismiss so keyboard input
   // lands somewhere sensible. Actions that hand focus to a *different*
   // window (e.g. `new-window` spawns a fresh chooser host and brings it
@@ -2040,9 +2024,8 @@ export function activateTitlePopupMenuItem(
   } else if (id === 'feedback') {
     // Forward to the panel renderer — see `triggerOpenFeedback`.
     // The title-bar Send Feedback button lands on the same helper
-    // via `comfy-window:click-feedback`; `source` distinguishes the
-    // two entry points in the telemetry payload.
-    bindings.triggerOpenFeedback(entry.parentEntryId, 'menu')
+    // via `comfy-window:click-feedback`.
+    bindings.triggerOpenFeedback(entry.parentEntryId)
   } else if (id === 'sign-in') {
     // No renderer in this loop — the popup is its own WebContentsView — so the
     // menu calls the same primitive `comfybuilder:signIn` does, which is what
@@ -2169,7 +2152,7 @@ function buildGlobalSettingsSnapshot(
   const generalFields = generalRaw.filter(
     (f) => f.id !== 'autoInstallUpdates' && f.id !== 'language'
   )
-  const telemetryFields = findSettingsFields(settingsSections, 'settings.telemetry', 1)
+  const betaFields = findSettingsFields(settingsSections, 'settings.beta', 1)
   const cache = findSettingsFields(settingsSections, 'settings.cache', 2)
   const advanced = findSettingsFields(settingsSections, 'settings.advanced', 3)
   const shared = (mediaSections[0]?.fields ?? []).map(toDetailField)
@@ -2186,7 +2169,7 @@ function buildGlobalSettingsSnapshot(
     highlightFieldId,
     languageFields,
     generalFields,
-    telemetryFields,
+    betaFields,
     desktopUpdateFields,
     cacheFields: cache,
     advancedFields: advanced,
@@ -2197,10 +2180,6 @@ function buildGlobalSettingsSnapshot(
       isPrimary: i === 0
     })),
     modelsSystemDefault: modelsDefault,
-    // Strict `=== true`: an absent consent key means the user was never asked,
-    // which must not read as a grant. (The telemetry FIELD above deliberately
-    // coerces the same absence the other way, to default-on collection.)
-    telemetryGranted: settings.get('telemetryEnabled') === true,
     appUpdate: {
       state: appUpdateState,
       progress: lastAppUpdateProgress,
@@ -3274,12 +3253,6 @@ export function _test_setTitlePopupEntry(webContentsId: number, entry: TitlePopu
 
 export function _test_deleteTitlePopupEntry(webContentsId: number): void {
   titlePopupsByWebContents.delete(webContentsId)
-}
-
-/** Test seam: the snapshot builder, whose top-level properties have no other
- *  reachable assertion point (the push path needs a live popup). */
-export function _test_buildGlobalSettingsSnapshot(): GlobalSettingsSnapshot {
-  return buildGlobalSettingsSnapshot()
 }
 
 /**

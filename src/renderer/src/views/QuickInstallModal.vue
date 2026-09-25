@@ -4,12 +4,10 @@ import { useI18n } from 'vue-i18n'
 import { useModal } from '../composables/useModal'
 
 import type { Source, FieldOption, ShowProgressOpts } from '../types/ipc'
-import { emitTelemetryAction, toVariantBucket } from '../lib/telemetry'
 import { stripVariantPrefix, sortedCardOptions } from '../lib/variants'
 import { DEFAULT_INSTALL_NAME } from '../../../shared/defaultInstallName'
 import VariantCardGrid from '../components/VariantCardGrid.vue'
 import {
-  trackGuardrailBlocked,
   createDiskSpaceChecker,
   showPathIssueAlerts,
   checkNvidiaDriverOrWarn,
@@ -116,7 +114,6 @@ async function open(): Promise<void> {
     ])
 
     if (!hw.supported) {
-      trackGuardrailBlocked('unsupported_hw', 'quick', 'open')
       await modal.alert({
         title: t('newInstall.unsupportedHardwareTitle'),
         message: hw.error || ''
@@ -141,11 +138,6 @@ async function open(): Promise<void> {
       return
     }
     source.value = standalone
-    emitTelemetryAction('comfy.desktop.install.method.selected', {
-      source_id: standalone.id,
-      source_category: standalone.category || standalone.id,
-      flow: 'quick'
-    })
 
     // Load releases and auto-select latest
     const releases = await window.api.getFieldOptions(
@@ -180,11 +172,6 @@ async function open(): Promise<void> {
 
 function selectVariant(option: FieldOption): void {
   selectedVariant.value = option
-  emitTelemetryAction('comfy.desktop.install.variant.selected', {
-    variant_bucket: toVariantBucket((option.data?.variantId as string | undefined) || option.value),
-    recommended: !!option.recommended,
-    flow: 'quick'
-  })
 }
 
 async function handleInstall(): Promise<void> {
@@ -195,7 +182,7 @@ async function handleInstall(): Promise<void> {
     // Warn if NVIDIA driver is too old for the bundled PyTorch
     const variantId = selectedVariant.value.data?.variantId as string | undefined
     if (variantId && stripVariantPrefix(variantId).startsWith('nvidia')) {
-      if (!(await checkNvidiaDriverOrWarn('quick', 'install', modal.confirm, t))) {
+      if (!(await checkNvidiaDriverOrWarn(modal.confirm, t))) {
         installing.value = false
         return
       }
@@ -205,7 +192,7 @@ async function handleInstall(): Promise<void> {
     if (instPath.value) {
       try {
         const issues = await window.api.validateInstallPath(instPath.value)
-        if (!(await showPathIssueAlerts(issues, 'quick', 'install', modal.alert, t))) {
+        if (!(await showPathIssueAlerts(issues, modal.alert, t))) {
           installing.value = false
           return
         }
@@ -227,7 +214,6 @@ async function handleInstall(): Promise<void> {
           !(await checkDiskSpaceOrWarn({
             path: instPath.value,
             estimatedRequired,
-            flow: 'quick',
             confirm: modal.confirm,
             t
           }))

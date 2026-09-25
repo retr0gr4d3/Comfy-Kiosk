@@ -25,7 +25,6 @@ import { installFilteredRequirements, runUvPip, getPipIndexArgs } from './pip'
 import * as installations from '../installations'
 import type { InstallationRecord } from '../installations'
 import * as settings from '../settings'
-import * as telemetry from './telemetry'
 import { DEFAULT_INSTALL_NAME } from '../../shared/defaultInstallName'
 import * as i18n from './i18n'
 import {
@@ -119,8 +118,6 @@ export type AdoptSourceMode = 'pre-swap-copy' | 'git-clone-fallback'
  *     preserved in `<configDir>/legacy-backup/<timestamp>/` so a
  *     future "rebuild as managed standalone" flow can read it then. */
 interface LegacyComfySettings {
-  /** `Comfy-Desktop.SendStatistics` — telemetry consent. */
-  sendStatistics?: boolean
   /** `Comfy-Desktop.AutoUpdate` — whether the legacy app installed
    *  Desktop updates silently. Maps to v2 `autoInstallUpdates`. */
   autoUpdate?: boolean
@@ -385,7 +382,6 @@ function readLegacyComfyPrefs(raw: Record<string, unknown>): LegacyComfySettings
   const asNonEmptyString = (v: unknown): string | undefined =>
     typeof v === 'string' && v.trim() !== '' ? v : undefined
   return {
-    sendStatistics: asBool(raw['Comfy-Desktop.SendStatistics']),
     autoUpdate: asBool(raw['Comfy-Desktop.AutoUpdate']),
     pypiMirror: asNonEmptyString(raw['Comfy-Desktop.UV.PypiInstallMirror'])
   }
@@ -706,10 +702,8 @@ async function installAdoptedRequirements(
   }
 
   // pygit2 is a separate uv invocation rather than a synthetic entry in a
-  // requirements file so we surface its exit code distinctly in telemetry
-  // (Manager + in-place updates both depend on it; we want to spot a
-  // population of adoptions where this specific install fails). Idempotent
-  // on reconcile.
+  // requirements file so its exit code surfaces distinctly (Manager +
+  // in-place updates both depend on it). Idempotent on reconcile.
   tools.sendOutput('Installing pygit2 into legacy venv (enables Manager + in-place updates)…\n')
   const pygit2Code = await runUvPip(
     uvPath,
@@ -821,7 +815,6 @@ interface CarryReport {
  *                              and each per-type override resolved to its
  *                              models root. See `computeModelsDirsToCarry`.
  *                              Always appended.
- *   - `telemetryEnabled`     ← `Comfy-Desktop.SendStatistics`
  *   - `autoInstallUpdates`   ← force `true`. Adoption ships as an
  *                              in-place app update of Legacy Desktop;
  *                              if the legacy user had `AutoUpdate: false`,
@@ -877,7 +870,6 @@ function carryLegacySettings(
     carriedKeys.push(key)
   }
 
-  tryCarry('telemetryEnabled', legacy.sendStatistics)
   tryCarry('pypiMirror', legacy.pypiMirror)
 
   // Force Desktop auto-updates on at adoption time, regardless of the
@@ -915,15 +907,6 @@ function carryLegacySettings(
   // first ran v2 and configured shared dirs keep their choice.
   tryCarry('inputDir', path.join(basePath, 'input'))
   tryCarry('outputDir', path.join(basePath, 'output'))
-
-  // This flow writes settings.json directly (not via applySettingSet), so refresh
-  // the durable per-setting person properties for what we just changed instead of
-  // waiting for the next boot (issues #1220/#1223). Consent-gated + queued.
-  const changedKeys = additions.length > 0 ? [...carriedKeys, 'modelsDirs'] : carriedKeys
-  const trackedProps = settings.getTrackedSettingsTelemetryProperties(changedKeys)
-  if (Object.keys(trackedProps).length > 0) {
-    telemetry.registerPersonProperties(trackedProps)
-  }
 
   return { addedModelsDirs: additions, carriedKeys, carrySkippedKeys }
 }
@@ -994,20 +977,7 @@ async function reconcileAdoptedRequirements(
       : path.join(info.basePath, '.venv', 'bin', 'python3'))
   const basePath = (existing.adoptedBaseDir as string | undefined) ?? info.basePath
   try {
-    await telemetry.trackedStep(
-      'comfy.desktop.adopt.requirements_reconcile',
-      { installation_id: existing.id },
-      async () => {
-        await installAdoptedRequirements(
-          destSource,
-          existing.installPath,
-          pythonPath,
-          basePath,
-          tools
-        )
-      },
-      { emitError: true }
-    )
+    await installAdoptedRequirements(destSource, existing.installPath, pythonPath, basePath, tools)
   } catch (err) {
     tools.sendOutput(`Warning: requirements reconcile threw: ${(err as Error).message}\n`)
   }
@@ -1032,11 +1002,8 @@ export async function adoptDesktopInstall(opts: AdoptOptions): Promise<Installat
     now: opts.deps?.now ?? (() => new Date())
   }
 
-  const info = await telemetry.trackedStep('comfy.desktop.adopt.detect', {}, async () => {
-    const detected = deps.detectDesktopInstall()
-    if (!detected) throw new Error('no-legacy-install')
-    return detected
-  })
+  const info = deps.detectDesktopInstall()
+  if (!info) throw new Error('no-legacy-install')
 
   // Idempotent re-run when the marker already names a recorded installation.
   // We still reconcile ComfyUI's requirements.txt against the legacy venv so
@@ -1044,9 +1011,7 @@ export async function adoptDesktopInstall(opts: AdoptOptions): Promise<Installat
   // installs whose deps drifted after a manual ComfyUI source update can
   // self-heal by re-running migrate-to-standalone. installFilteredRequirements
   // is idempotent — repeating it on an up-to-date venv is a uv no-op.
-  const existing = await telemetry.trackedStep('comfy.desktop.adopt.find_existing', {}, async () =>
-    findExistingAdoption(info.basePath)
-  )
+  const existing = await findExistingAdoption(info.basePath)
   if (existing) {
     tools.sendOutput(`Already adopted as installation ${existing.id}; reconciling requirements…\n`)
     // Backfill: older adoptions only wrote the marker under
@@ -1066,8 +1031,6 @@ export async function adoptDesktopInstall(opts: AdoptOptions): Promise<Installat
     await reconcileAdoptedRequirements(existing, info, tools)
     return existing
   }
-
-  telemetry.capture('comfy.desktop.adopt.started', {})
 
   return runAdoption(info, tools, deps)
 }
@@ -1100,24 +1063,20 @@ async function runAdoption(
   })
 
   sendProgress('backup', { percent: 0 })
-  await telemetry.trackedStep('comfy.desktop.adopt.backup', {}, async () => {
-    await backupLegacyState(info.configDir, info.basePath, timestamp, sendOutput)
-  })
+  await backupLegacyState(info.configDir, info.basePath, timestamp, sendOutput)
 
   if (process.platform === 'darwin') {
     sendProgress('tcc', { percent: 0 })
-    await telemetry.trackedStep('comfy.desktop.adopt.tcc', {}, async () => {
-      try {
-        await fs.promises.readdir(info.basePath)
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code
-        if (code === 'EACCES' || code === 'EPERM') {
-          await tools.promptUser('tcc', { path: info.basePath })
-          throw new Error('tcc-denied', { cause: err })
-        }
-        throw err
+    try {
+      await fs.promises.readdir(info.basePath)
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === 'EACCES' || code === 'EPERM') {
+        await tools.promptUser('tcc', { path: info.basePath })
+        throw new Error('tcc-denied', { cause: err })
       }
-    })
+      throw err
+    }
   }
 
   sendProgress('venv', { percent: 0 })
@@ -1126,13 +1085,11 @@ async function runAdoption(
       ? path.join(info.basePath, '.venv', 'Scripts', 'python.exe')
       : path.join(info.basePath, '.venv', 'bin', 'python3')
 
-  await telemetry.trackedStep('comfy.desktop.adopt.validate_venv', {}, async () => {
-    if (!fs.existsSync(pythonPath)) {
-      const choice = await tools.promptUser('venv-broken', { reason: 'venv-missing', pythonPath })
-      if (choice.kind === 'venv-broken' && choice.choice === 'cancel')
-        throw new Error('venv-broken-cancelled')
-      return
-    }
+  if (!fs.existsSync(pythonPath)) {
+    const choice = await tools.promptUser('venv-broken', { reason: 'venv-missing', pythonPath })
+    if (choice.kind === 'venv-broken' && choice.choice === 'cancel')
+      throw new Error('venv-broken-cancelled')
+  } else {
     const result = await deps.validateLegacyVenv(pythonPath, signal)
     if (!result.ok) {
       const choice = await tools.promptUser('venv-broken', {
@@ -1142,30 +1099,25 @@ async function runAdoption(
       if (choice.kind === 'venv-broken' && choice.choice === 'cancel')
         throw new Error('venv-broken-cancelled')
     }
-  })
+  }
 
   sendProgress('snapshot', { percent: 0 })
-  await telemetry.trackedStep('comfy.desktop.adopt.snapshot', {}, async () => {
-    try {
-      const snap = await deps.captureDesktopSnapshot(info)
-      const snapshotsDir = path.join(info.basePath, SNAPSHOTS_REL)
-      await fs.promises.mkdir(snapshotsDir, { recursive: true })
-      const snapshotFile = path.join(snapshotsDir, `legacy-adopted-${timestamp}.json`)
-      await fs.promises.writeFile(
-        snapshotFile,
-        JSON.stringify({ ...snap, skipPipSync: true }, null, 2)
-      )
-    } catch (err) {
-      sendOutput(`Warning: forensic snapshot failed: ${(err as Error).message}\n`)
-    }
-  })
+  try {
+    const snap = await deps.captureDesktopSnapshot(info)
+    const snapshotsDir = path.join(info.basePath, SNAPSHOTS_REL)
+    await fs.promises.mkdir(snapshotsDir, { recursive: true })
+    const snapshotFile = path.join(snapshotsDir, `legacy-adopted-${timestamp}.json`)
+    await fs.promises.writeFile(
+      snapshotFile,
+      JSON.stringify({ ...snap, skipPipSync: true }, null, 2)
+    )
+  } catch (err) {
+    sendOutput(`Warning: forensic snapshot failed: ${(err as Error).message}\n`)
+  }
 
   sendProgress('allocate', { percent: 0 })
-  const installPath = await telemetry.trackedStep('comfy.desktop.adopt.allocate', {}, async () => {
-    const allocated = allocateUniqueDir(defaultInstallDir(), sanitizeDirName(ADOPT_INSTALL_NAME))
-    await fs.promises.mkdir(allocated, { recursive: true })
-    return allocated
-  })
+  const installPath = allocateUniqueDir(defaultInstallDir(), sanitizeDirName(ADOPT_INSTALL_NAME))
+  await fs.promises.mkdir(installPath, { recursive: true })
 
   sendProgress('source', { percent: 0 })
   const destSource = path.join(installPath, 'ComfyUI')
@@ -1173,20 +1125,17 @@ async function runAdoption(
   let sourceAttempts = 0
   while (sourceMode === null) {
     sourceAttempts++
-    sourceMode = await telemetry.trackedStep(
-      'comfy.desktop.adopt.source',
-      { attempt: sourceAttempts },
-      async () => {
-        const sourceResult = await sourceComfyUI(info, destSource, tools, deps)
-        if (sourceResult.mode !== 'failed') return sourceResult.mode
-        const choice = await tools.promptUser('source-missing', {
-          message: sourceResult.message,
-          attempts: sourceAttempts
-        })
-        if (choice.kind === 'source-missing' && choice.choice === 'retry') return null
-        throw new Error(`source-missing: ${sourceResult.message}`)
-      }
-    )
+    const sourceResult = await sourceComfyUI(info, destSource, tools, deps)
+    if (sourceResult.mode !== 'failed') {
+      sourceMode = sourceResult.mode
+      break
+    }
+    const choice = await tools.promptUser('source-missing', {
+      message: sourceResult.message,
+      attempts: sourceAttempts
+    })
+    if (choice.kind === 'source-missing' && choice.choice === 'retry') continue
+    throw new Error(`source-missing: ${sourceResult.message}`)
   }
 
   // Adoption preserves the user's existing ComfyUI checkout as-is — it is
@@ -1222,29 +1171,11 @@ async function runAdoption(
   }
 
   sendProgress('requirements', { percent: 0 })
-  const reqReport = await telemetry.trackedStep(
-    'comfy.desktop.adopt.requirements',
-    {},
-    async () => {
-      try {
-        return await installAdoptedRequirements(
-          destSource,
-          installPath,
-          pythonPath,
-          info.basePath,
-          tools
-        )
-      } catch (err) {
-        sendOutput(`Warning: requirements install threw: ${(err as Error).message}\n`)
-        return {
-          uvAvailable: false,
-          coreExitCode: null,
-          managerExitCode: null,
-          pygit2ExitCode: null
-        }
-      }
-    }
-  )
+  try {
+    await installAdoptedRequirements(destSource, installPath, pythonPath, info.basePath, tools)
+  } catch (err) {
+    sendOutput(`Warning: requirements install threw: ${(err as Error).message}\n`)
+  }
 
   const settingsRead = readLegacyComfySettings(info.basePath)
   const rawComfySettings = settingsRead.settings
@@ -1262,141 +1193,105 @@ async function runAdoption(
   const derived = deriveLaunchArgs(rawComfySettings, selectedDevice)
 
   sendProgress('settings', { percent: 0 })
-  const carry = await telemetry.trackedStep('comfy.desktop.adopt.carry_settings', {}, async () => {
-    return carryLegacySettings(info.basePath, info.configDir, prefs, sendOutput)
-  })
+  await carryLegacySettings(info.basePath, info.configDir, prefs, sendOutput)
 
   sendProgress('register', { percent: 0 })
-  const record = await telemetry.trackedStep('comfy.desktop.adopt.register', {}, async () => {
-    // Re-read post-update so the recorded version matches the checkout.
-    const comfyVersion = readComfyVersion(destSource) ?? undefined
+  // Re-read post-update so the recorded version matches the checkout.
+  const comfyVersion = readComfyVersion(destSource) ?? undefined
 
-    // Per-install input/output: explicit legacy overrides win; otherwise
-    // pin to legacy workspace defaults so the adopted install opens the
-    // same input/output folders the user had on day one.
-    const inputDir = derived.pathOverrides.inputDir ?? path.join(info.basePath, 'input')
-    const outputDir = derived.pathOverrides.outputDir ?? path.join(info.basePath, 'output')
+  // Per-install input/output: explicit legacy overrides win; otherwise
+  // pin to legacy workspace defaults so the adopted install opens the
+  // same input/output folders the user had on day one.
+  const inputDir = derived.pathOverrides.inputDir ?? path.join(info.basePath, 'input')
+  const outputDir = derived.pathOverrides.outputDir ?? path.join(info.basePath, 'output')
 
-    const recordData: Record<string, unknown> = {
-      name: ADOPT_INSTALL_NAME,
-      sourceId: 'standalone',
-      installPath,
-      adopted: true,
-      adoptedAt: deps.now().toISOString(),
-      adoptedBaseDir: info.basePath,
-      adoptedPythonPath: pythonPath,
-      adoptedSourceMode: sourceMode!,
-      ...(settingsRead.status !== 'error'
-        ? { adoptedSettingsVersion: ADOPTED_SETTINGS_VERSION }
-        : {}),
-      ...(legacyAppVersion ? { adoptedFromLegacyVersion: legacyAppVersion } : {}),
-      // Hardware hints stashed for a future "rebuild as managed standalone"
-      // flow that needs to preselect the right variant — no v2 consumer
-      // today, but cheap to capture while we have the legacy config open.
-      ...(detectedGpu ? { adoptedFromGpu: detectedGpu } : {}),
-      ...(selectedDevice ? { adoptedSelectedDevice: selectedDevice } : {}),
-      releaseTag: 'legacy-adopted',
-      variant: 'legacy-uv-py312',
-      pythonVersion: '3.12',
-      ...(comfyVersion ? { version: comfyVersion } : {}),
-      ...(resolvedComfyVersion ? { comfyVersion: resolvedComfyVersion } : {}),
-      launchArgs: derived.launchArgs,
-      launchMode: 'window',
-      browserPartition: 'unique',
-      portConflict: 'auto',
-      // Adopted records keep the user's existing ComfyUI checkout and stay
-      // on opt-in updates — matching v2's standard policy that ComfyUI
-      // updates are never applied automatically.
-      autoUpdateComfyUI: false,
-      // Shared models = on (legacy `models/` lives in the global modelsDirs).
-      // Shared input/output = off (workspace pinned to legacy basePath via
-      // the per-install inputDir/outputDir fields below).
-      useSharedModels: true,
-      useSharedInput: false,
-      useSharedOutput: false,
-      inputDir,
-      outputDir,
-      copiedFrom: 'legacy-desktop',
-      copyReason: 'in-place-adoption',
-      status: 'installed',
-      seen: false
-    }
-    const entry = await installations.add(recordData)
-    // Marker is written only after the record exists so a crash in between
-    // doesn't poison the next adoption attempt with a dangling marker.
-    // If the marker write itself fails (disk full, permissions, …) we
-    // must roll the DB entry back — otherwise the next re-run sees no
-    // marker and creates a duplicate installation record.
-    //
-    // Two markers, two different jobs:
-    //   - `<adoptedBaseDir>/<MARKER_FILE>` lets the next adopt attempt
-    //     recognise an already-adopted legacy install and short-circuit
-    //     (see `findExistingAdoption`). Also makes `detectDesktopInstall()`
-    //     skip this workspace, so the startup auto-tracker can't reseed a
-    //     "ComfyUI Legacy Desktop" card alongside the adopted standalone.
-    //   - `<installPath>/<MARKER_FILE>` is the safety check used by the
-    //     standard delete flow (`sessionActions/delete.ts`) — without it
-    //     "Delete" on an adopted install errors out as "not created by
-    //     Desktop 2.0". Adopted delete also relies on the install-side
-    //     marker before touching anything under `adoptedBaseDir`.
+  const recordData: Record<string, unknown> = {
+    name: ADOPT_INSTALL_NAME,
+    sourceId: 'standalone',
+    installPath,
+    adopted: true,
+    adoptedAt: deps.now().toISOString(),
+    adoptedBaseDir: info.basePath,
+    adoptedPythonPath: pythonPath,
+    adoptedSourceMode: sourceMode!,
+    ...(settingsRead.status !== 'error'
+      ? { adoptedSettingsVersion: ADOPTED_SETTINGS_VERSION }
+      : {}),
+    ...(legacyAppVersion ? { adoptedFromLegacyVersion: legacyAppVersion } : {}),
+    // Hardware hints stashed for a future "rebuild as managed standalone"
+    // flow that needs to preselect the right variant — no v2 consumer
+    // today, but cheap to capture while we have the legacy config open.
+    ...(detectedGpu ? { adoptedFromGpu: detectedGpu } : {}),
+    ...(selectedDevice ? { adoptedSelectedDevice: selectedDevice } : {}),
+    releaseTag: 'legacy-adopted',
+    variant: 'legacy-uv-py312',
+    pythonVersion: '3.12',
+    ...(comfyVersion ? { version: comfyVersion } : {}),
+    ...(resolvedComfyVersion ? { comfyVersion: resolvedComfyVersion } : {}),
+    launchArgs: derived.launchArgs,
+    launchMode: 'window',
+    browserPartition: 'unique',
+    portConflict: 'auto',
+    // Adopted records keep the user's existing ComfyUI checkout and stay
+    // on opt-in updates — matching v2's standard policy that ComfyUI
+    // updates are never applied automatically.
+    autoUpdateComfyUI: false,
+    // Shared models = on (legacy `models/` lives in the global modelsDirs).
+    // Shared input/output = off (workspace pinned to legacy basePath via
+    // the per-install inputDir/outputDir fields below).
+    useSharedModels: true,
+    useSharedInput: false,
+    useSharedOutput: false,
+    inputDir,
+    outputDir,
+    copiedFrom: 'legacy-desktop',
+    copyReason: 'in-place-adoption',
+    status: 'installed',
+    seen: false
+  }
+  const record = await installations.add(recordData)
+  // Marker is written only after the record exists so a crash in between
+  // doesn't poison the next adoption attempt with a dangling marker.
+  // If the marker write itself fails (disk full, permissions, …) we
+  // must roll the DB entry back — otherwise the next re-run sees no
+  // marker and creates a duplicate installation record.
+  //
+  // Two markers, two different jobs:
+  //   - `<adoptedBaseDir>/<MARKER_FILE>` lets the next adopt attempt
+  //     recognise an already-adopted legacy install and short-circuit
+  //     (see `findExistingAdoption`). Also makes `detectDesktopInstall()`
+  //     skip this workspace, so the startup auto-tracker can't reseed a
+  //     "ComfyUI Legacy Desktop" card alongside the adopted standalone.
+  //   - `<installPath>/<MARKER_FILE>` is the safety check used by the
+  //     standard delete flow (`sessionActions/delete.ts`) — without it
+  //     "Delete" on an adopted install errors out as "not created by
+  //     Desktop 2.0". Adopted delete also relies on the install-side
+  //     marker before touching anything under `adoptedBaseDir`.
+  try {
+    await fs.promises.writeFile(path.join(info.basePath, MARKER_FILE), record.id)
+    await fs.promises.writeFile(path.join(installPath, MARKER_FILE), record.id)
+  } catch (err) {
     try {
-      await fs.promises.writeFile(path.join(info.basePath, MARKER_FILE), entry.id)
-      await fs.promises.writeFile(path.join(installPath, MARKER_FILE), entry.id)
-    } catch (err) {
-      try {
-        await installations.remove(entry.id)
-      } catch {}
-      throw err
-    }
-    // Drop the auto-tracked legacy desktop card now that the adopted
-    // standalone record represents the same workspace. Without this the
-    // dashboard shows two cards for the same install path (one with
-    // `launchMode: 'external'` pointing at the no-longer-installed
-    // legacy app). The startup auto-tracker won't reseed it because the
-    // marker we just wrote disqualifies the path from
-    // `detectDesktopInstall()`. Best-effort: a failure here doesn't break
-    // adoption — the next app launch reconciles via the marker check.
-    try {
-      const all = await installations.list()
-      for (const i of all) {
-        if (i.sourceId !== 'desktop') continue
-        if (i.installPath !== info.basePath) continue
-        await installations.remove(i.id)
-      }
+      await installations.remove(record.id)
     } catch {}
-    return entry
-  })
-
-  telemetry.capture('comfy.desktop.adopt.succeeded', {
-    installation_id: record.id,
-    legacy_version: legacyAppVersion ?? null,
-    adopted_source_mode: sourceMode,
-    has_venv: info.hasVenv,
-    has_extra_models_yaml: fs.existsSync(path.join(info.configDir, EXTRA_MODELS_YAML)),
-    models_dir_count: carry.addedModelsDirs.length,
-    carried_keys: carry.carriedKeys,
-    carry_skipped_keys: carry.carrySkippedKeys,
-    adopted_path_override_input: !!derived.pathOverrides.inputDir,
-    adopted_path_override_output: !!derived.pathOverrides.outputDir,
-    adopted_comfy_tag_at_migration: null,
-    requirements_uv_available: reqReport.uvAvailable,
-    requirements_core_exit: reqReport.coreExitCode,
-    requirements_manager_exit: reqReport.managerExitCode,
-    requirements_pygit2_exit: reqReport.pygit2ExitCode,
-    gpu: detectedGpu,
-    selected_device: selectedDevice
-  })
-
-  // Fire the once-per-install funnel event for the in-place Desktop-1 adoption
-  // path. Only reached on a fresh adoption — the idempotent re-run in
-  // `adoptDesktopInstall` returns the existing record before `runAdoption`, so
-  // this never re-fires for an already-adopted install. Best-effort:
-  // `capture()` swallows its own errors and never aborts adoption.
-  telemetry.captureInstallCompleted({
-    installationId: record.id,
-    method: 'adopt',
-    express: false
-  })
+    throw err
+  }
+  // Drop the auto-tracked legacy desktop card now that the adopted
+  // standalone record represents the same workspace. Without this the
+  // dashboard shows two cards for the same install path (one with
+  // `launchMode: 'external'` pointing at the no-longer-installed
+  // legacy app). The startup auto-tracker won't reseed it because the
+  // marker we just wrote disqualifies the path from
+  // `detectDesktopInstall()`. Best-effort: a failure here doesn't break
+  // adoption — the next app launch reconciles via the marker check.
+  try {
+    const all = await installations.list()
+    for (const i of all) {
+      if (i.sourceId !== 'desktop') continue
+      if (i.installPath !== info.basePath) continue
+      await installations.remove(i.id)
+    }
+  } catch {}
 
   sendProgress('done', { percent: 100 })
   return record

@@ -11,7 +11,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'show-progress': [opts: ShowProgressOpts]
-  'show-settings': []
   'show-quick-install': []
 }>()
 
@@ -55,12 +54,5 @@ async function startMigration(): Promise<void> {
       <Download :size="18" />
       {{ $t('dashboard.migrateBannerSkip') }}
     </button>
-
-    <p class="dashboard-telemetry-notice">
-      {{ $t('dashboard.telemetryNotice') }}
-      <button class="dashboard-telemetry-link" @click="emit('show-settings')">
-        {{ $t('dashboard.telemetrySettings') }}
-      </button>
-    </p>
   </div>
 </template>

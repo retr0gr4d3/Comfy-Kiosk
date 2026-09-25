@@ -1,7 +1,7 @@
 // Shopping-list chain steps shared by every `runAction` dispatcher. Each
 // helper drives a modal step and returns the updated `ActionDef`, or `null`
 // when the user cancelled or prerequisites failed (caller short-circuits).
-// Orchestration (guards, progress, telemetry, navigation) stays in callers.
+// Orchestration (guards, progress, navigation) stays in callers.
 
 import type { useModal } from './useModal'
 import type { useDialogs } from './useDialogs'

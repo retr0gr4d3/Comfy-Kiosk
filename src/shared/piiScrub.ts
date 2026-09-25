@@ -1,15 +1,12 @@
 /**
- * Best-effort PII and secret scrubbing for telemetry payloads.
+ * Best-effort PII and secret scrubbing for persisted log text.
  *
  * Strips usernames out of Windows / macOS / Linux home directory paths and
  * redacts well-known credential shapes (Bearer tokens, OpenAI / Hugging Face
  * keys, basic-auth in URLs, `*KEY=…` / `*SECRET=…` env-style assignments) so
- * tracebacks and error messages can be safely forwarded to Datadog and
- * PostHog.
+ * tracebacks and error messages written to the app log don't carry them.
  *
- * Centralized so that every telemetry / off-box forwarder — the
- * main-process `forwardDatadogError`, the `executionTap` traceback emitter,
- * and the renderer-side `scrubTelemetryContext` safety net — applies
+ * Centralized so every caller (the app log, pip error messages) applies
  * identical rules. Adding a pattern here updates every call site at once.
  *
  * Not applied to logs displayed locally to the user (e.g. the crashed-state
@@ -67,43 +64,11 @@ export function scrubSecrets(value: string): string {
 
 /**
  * Apply every scrubber in one pass. Use this for any text leaving the
- * process boundary (telemetry, error reports, log forwarding) — it is the
- * single source of truth for "what gets redacted before going off-box".
+ * process boundary (error reports, log files) — it is the single source of
+ * truth for "what gets redacted".
  */
 export function scrubAll(value: string): string {
   // Credentials embedded in URLs can resemble email addresses, so redact
   // secrets before the broader email/path PII pass.
   return scrubPII(scrubSecrets(value))
-}
-
-export type SafeTelemetryValue = boolean | number | string | null
-
-/** Normalize untrusted exception metadata before it reaches a telemetry SDK. */
-export function normalizeExceptionContext(
-  context: Record<string, unknown>,
-  limits: { maxKeys?: number; maxArrayItems?: number; maxStringLength?: number } = {}
-): Record<string, SafeTelemetryValue | SafeTelemetryValue[]> {
-  const maxKeys = limits.maxKeys ?? 64
-  const maxArrayItems = limits.maxArrayItems ?? 32
-  const maxStringLength = limits.maxStringLength ?? 16 * 1024
-  const normalized: Record<string, SafeTelemetryValue | SafeTelemetryValue[]> = {}
-
-  for (const [rawKey, value] of Object.entries(context).slice(0, maxKeys)) {
-    const key = scrubAll(rawKey).slice(0, 128)
-    if (!key) continue
-    if (typeof value === 'string') {
-      normalized[key] = scrubAll(value).slice(0, maxStringLength)
-    } else if (typeof value === 'boolean' || typeof value === 'number' || value === null) {
-      normalized[key] = value
-    } else if (Array.isArray(value)) {
-      normalized[key] = value.slice(0, maxArrayItems).flatMap((entry) => {
-        if (typeof entry === 'string') return [scrubAll(entry).slice(0, maxStringLength)]
-        if (typeof entry === 'boolean' || typeof entry === 'number' || entry === null)
-          return [entry]
-        return []
-      })
-    }
-  }
-
-  return normalized
 }

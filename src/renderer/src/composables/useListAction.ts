@@ -3,7 +3,6 @@ import { useModal } from './useModal'
 import { useActionGuard } from './useActionGuard'
 import { useLocalInstanceGuard } from './useLocalInstanceGuard'
 import { useSessionStore } from '../stores/sessionStore'
-import { emitTelemetryAction, toErrorBucket } from '../lib/telemetry'
 import { progressOpKindForActionId, destroysInstanceForActionId } from '../lib/progressOpKind'
 import {
   IN_PLACE_RELAUNCH,
@@ -27,7 +26,7 @@ export interface ListActionInvocationHooks {
   isRestart?: boolean
 }
 
-export function useListAction(uiSurface: string, callbacks: ListActionCallbacks) {
+export function useListAction(callbacks: ListActionCallbacks) {
   const { t } = useI18n()
   const modal = useModal()
   const actionGuard = useActionGuard()
@@ -39,11 +38,6 @@ export function useListAction(uiSurface: string, callbacks: ListActionCallbacks)
     action: ListAction,
     hooks?: ListActionInvocationHooks
   ): Promise<void> {
-    const telemetryContext = {
-      source_category: inst.sourceCategory || 'unknown',
-      ui_surface: uiSurface
-    }
-
     if (action.enabled === false && action.disabledMessage) {
       await modal.alert({ title: action.label, message: action.disabledMessage })
       return
@@ -72,11 +66,6 @@ export function useListAction(uiSurface: string, callbacks: ListActionCallbacks)
         confirmStyle: action.style || 'danger'
       })
       if (!confirmed) {
-        emitTelemetryAction('comfy.desktop.action.result', {
-          action_id: action.id,
-          result: 'cancelled',
-          ...telemetryContext
-        })
         return
       }
     }
@@ -86,11 +75,6 @@ export function useListAction(uiSurface: string, callbacks: ListActionCallbacks)
         isRestart: hooks?.isRestart === true
       })
       if (!canLaunch) {
-        emitTelemetryAction('comfy.desktop.action.result', {
-          action_id: action.id,
-          result: 'cancelled',
-          ...telemetryContext
-        })
         return
       }
     }
@@ -106,18 +90,9 @@ export function useListAction(uiSurface: string, callbacks: ListActionCallbacks)
         confirmStyle: 'primary'
       })
       if (!confirmed) {
-        emitTelemetryAction('comfy.desktop.action.result', {
-          action_id: action.id,
-          result: 'cancelled',
-          ...telemetryContext
-        })
         return
       }
       sessionStore.clearErrorInstance(inst.id)
-      emitTelemetryAction('comfy.desktop.action.invoked', {
-        action_id: action.id,
-        ...telemetryContext
-      })
       callbacks.showProgress({
         installationId: inst.id,
         title: `${t('desktop.migrating')} — ${inst.name}`,
@@ -138,10 +113,6 @@ export function useListAction(uiSurface: string, callbacks: ListActionCallbacks)
     if (hooks?.onGuardsPassed) await hooks.onGuardsPassed()
 
     sessionStore.clearErrorInstance(inst.id)
-    emitTelemetryAction('comfy.desktop.action.invoked', {
-      action_id: action.id,
-      ...telemetryContext
-    })
 
     const needsSelfStop = wasRunning && requiresStoppedGuard
     const wantsRelaunch = needsSelfStop && IN_PLACE_RELAUNCH.has(action.id)
@@ -175,37 +146,21 @@ export function useListAction(uiSurface: string, callbacks: ListActionCallbacks)
       return
     }
 
-    try {
-      if (needsSelfStop) {
-        await stopAndWaitForExit(inst.id, isRunning)
-      }
-      const result = await window.api.runAction(inst.id, action.id)
-      if (result.running) {
-        await actionGuard.checkBeforeAction(inst.id, action.label)
-        return
-      }
-      if (wantsRelaunch && result?.ok !== false) {
-        await window.api.runAction(inst.id, 'launch')
-      }
-      const resultValue = result.cancelled ? 'cancelled' : result.ok === false ? 'failed' : 'ok'
-      emitTelemetryAction('comfy.desktop.action.result', {
-        action_id: action.id,
-        result: resultValue,
-        ...telemetryContext
-      })
-      if (callbacks.onNavigate) {
-        await callbacks.onNavigate(result, action)
-      } else if (result.message) {
-        await modal.alert({ title: action.label, message: result.message })
-      }
-    } catch (error: unknown) {
-      emitTelemetryAction('comfy.desktop.action.result', {
-        action_id: action.id,
-        result: 'failed',
-        error_bucket: toErrorBucket(error),
-        ...telemetryContext
-      })
-      throw error
+    if (needsSelfStop) {
+      await stopAndWaitForExit(inst.id, isRunning)
+    }
+    const result = await window.api.runAction(inst.id, action.id)
+    if (result.running) {
+      await actionGuard.checkBeforeAction(inst.id, action.label)
+      return
+    }
+    if (wantsRelaunch && result?.ok !== false) {
+      await window.api.runAction(inst.id, 'launch')
+    }
+    if (callbacks.onNavigate) {
+      await callbacks.onNavigate(result, action)
+    } else if (result.message) {
+      await modal.alert({ title: action.label, message: result.message })
     }
   }
 

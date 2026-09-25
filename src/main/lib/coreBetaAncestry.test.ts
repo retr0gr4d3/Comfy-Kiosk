@@ -28,7 +28,6 @@ vi.mock('./git', () => ({
     git.presence ?? ((await git.revParseRef(repo, `${sha}^{commit}`)) ? 'present' : 'absent')
 }))
 vi.mock('./paths', () => ({ configDir: () => git.configDir }))
-vi.mock('./telemetry', () => ({ getOpsFlagResult: vi.fn() }))
 
 import { _backgroundFetchesForTest, resolveCoreCommitState } from './coreBetaAncestry'
 import { NO_CORE_COMMITS } from './coreBetaGrants'

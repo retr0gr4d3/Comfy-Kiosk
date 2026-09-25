@@ -41,7 +41,7 @@ export interface HydratedTemplate {
   /** Card preview image URL, or `null` for non-image previews (audio → glyph). */
   thumbnailUrl: string | null
   /** Index `title` (e.g. "Image", "Video") of the category the template lives
-   *  in upstream — carried for telemetry/sub-grouping, not the tab grouping. */
+   *  in upstream — carried for sub-grouping, not the tab grouping. */
   category: string
 }
 

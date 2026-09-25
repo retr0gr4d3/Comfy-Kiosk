@@ -82,7 +82,7 @@ test.beforeAll(async () => {
   await writeFile(envelopePath, JSON.stringify(envelope, null, 2))
 
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
     installations: [
       {
         id: INSTALL_ID,

@@ -55,7 +55,7 @@ test.beforeAll(async () => {
   await writeFile(path.join(installBPath, MARKER_FILENAME), INSTALL_B_ID)
 
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
     installations: [
       {
         id: INSTALL_A_ID,

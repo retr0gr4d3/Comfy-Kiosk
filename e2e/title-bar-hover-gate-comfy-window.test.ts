@@ -34,7 +34,7 @@ let titleBar: WebContentsPage
 test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(async () => {
-  ctx = await launchApp({ settings: { firstUseCompleted: true, telemetryEnabled: false } })
+  ctx = await launchApp({ settings: { firstUseCompleted: true } })
   titleBar = ctx.titleBar
 
   // Click the auto-seeded Cloud install row (post unsticky-cloud, it's no

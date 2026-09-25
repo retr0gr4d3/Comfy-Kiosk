@@ -33,7 +33,7 @@ test.beforeAll(async () => {
   // `firstUseCompleted: true` keeps the first-use takeover from racing
   // the renderer mount and locking the title bar (consent-lockdown hides
   // the waffle button, breaking the title-popup tests below).
-  ctx = await launchApp({ settings: { firstUseCompleted: true, telemetryEnabled: false } })
+  ctx = await launchApp({ settings: { firstUseCompleted: true } })
 })
 
 test.afterAll(async () => {

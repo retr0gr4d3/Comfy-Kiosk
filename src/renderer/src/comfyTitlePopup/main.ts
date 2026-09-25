@@ -9,8 +9,6 @@ import { installPickerSettingsApiShim } from './pickerSettingsApiShim'
 
 // Default to dark; the popup overrides bg/text inline from main's theme,
 // but data-theme still drives any non-overridden fallback CSS variables.
-// Telemetry is captured main-side, not here, to avoid minting a new
-// session on every transient popup open.
 document.documentElement.setAttribute('data-theme', 'dark')
 
 // Must run BEFORE Vue mounts so modules that capture window.api at import

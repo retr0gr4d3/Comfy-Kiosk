@@ -43,7 +43,7 @@ interface UseBetaActivationNoticeOpts {
   /** True while another card owns the single popup (currently the pill hint). */
   isSuppressed: () => boolean
   /** Copy for the card main actually resolved. A callback rather than fixed strings because
-   *  the wording depends on the notice: the PostHog payload may name the feature, and a
+   *  the wording depends on the notice: the ops-flag payload may name the feature, and a
    *  remote force-off reads the opposite way from an activation. i18n stays with the caller.
    *
    *  Being a callback also keeps the copy lazy, which is load-bearing on its own: the title

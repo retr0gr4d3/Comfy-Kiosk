@@ -280,8 +280,6 @@ export interface SessionInfo {
   installationName: string
   sourceInstallationId?: string
   startedAt: number
-  /** Synchronously queue final telemetry before app-level shutdown drains the SDK. */
-  flushTelemetry?: () => void
   /** Latest accelerator details parsed from this session's ComfyUI startup logs. */
   getAcceleratorInfo?: () => AcceleratorSnapshot | null
 }
@@ -310,19 +308,9 @@ export interface RestartCallbackInfo {
   process?: ChildProcess
 }
 
-/** Fired from `_addSession` on every ComfyUI instance boot; drives the
- *  main-process `instance_started` / `snapshot_history` telemetry. */
-export interface InstanceStartedCallbackInfo {
-  installationId: string
-  bootTimeMs?: number
-  portRetries: number
-  rebootRetries: number
-}
-
 export type LaunchCallback = (info: LaunchCallbackInfo) => void
 export type StopCallback = (info: StopCallbackInfo) => void
 export type ExitCallback = (info: ExitCallbackInfo) => void
-export type InstanceStartedCallback = (info: InstanceStartedCallbackInfo) => void
 export type RestartCallback = (info: RestartCallbackInfo) => void
 export type ModelFolderRelaunchCallback = (info: { installationId: string }) => void | Promise<void>
 export type LocaleCallback = () => void
@@ -332,7 +320,6 @@ export interface RegisterCallbacks {
   onLaunch?: LaunchCallback
   onStop?: StopCallback
   onComfyExited?: ExitCallback
-  onInstanceStarted?: InstanceStartedCallback
   onComfyRestarted?: RestartCallback
   onModelFolderRelaunch?: ModelFolderRelaunchCallback
   onLocaleChanged?: LocaleCallback
@@ -350,7 +337,6 @@ export const sourceMap: Record<string, SourcePlugin> = Object.fromEntries(
 export let _onLaunch: LaunchCallback | null = null
 export let _onStop: StopCallback | null = null
 export let _onComfyExited: ExitCallback | null = null
-export let _onInstanceStarted: InstanceStartedCallback | null = null
 export let _onComfyRestarted: RestartCallback | null = null
 export let _onModelFolderRelaunch: ModelFolderRelaunchCallback | null = null
 export let _onLocaleChanged: LocaleCallback | null = null
@@ -518,7 +504,6 @@ export function setCallbacks(callbacks: RegisterCallbacks): void {
   _onLaunch = callbacks.onLaunch ?? null
   _onStop = callbacks.onStop ?? null
   _onComfyExited = callbacks.onComfyExited ?? null
-  _onInstanceStarted = callbacks.onInstanceStarted ?? null
   _onComfyRestarted = callbacks.onComfyRestarted ?? null
   _onModelFolderRelaunch = callbacks.onModelFolderRelaunch ?? null
   _onLocaleChanged = callbacks.onLocaleChanged ?? null
@@ -727,7 +712,7 @@ export function openPath(targetPath: string): Promise<string> {
 
 // Memoized: the version cannot change mid-session, and the unpackaged-dev
 // fallback below is a SYNCHRONOUS git spawn that would otherwise block the
-// main thread on every telemetry event and IPC call that stamps a version.
+// main thread on every IPC call that stamps a version.
 let _appVersion: string | null = null
 
 export function getAppVersion(): string {
@@ -1055,21 +1040,7 @@ export {
 
 export function _addSession(
   installationId: string,
-  {
-    proc,
-    port,
-    url,
-    mode,
-    installationName,
-    flushTelemetry,
-    getAcceleratorInfo
-  }: Omit<SessionInfo, 'startedAt'>,
-  bootTimeMs?: number,
-  /** Spawn-retry counts for THIS boot, folded onto the broadcast so the
-   *  renderer's `instance_started` telemetry can carry them without a
-   *  separate `server_ready` event. Omitted for the remote / skip-port paths
-   *  (no spawn retry there). */
-  retries?: { portRetries: number; rebootRetries: number },
+  { proc, port, url, mode, installationName, getAcceleratorInfo }: Omit<SessionInfo, 'startedAt'>,
   /** Durable installation identity when the runtime session uses an isolated key. */
   sourceInstallationId: string = installationId
 ): void {
@@ -1080,7 +1051,6 @@ export function _addSession(
     mode,
     installationName,
     sourceInstallationId,
-    flushTelemetry,
     getAcceleratorInfo,
     startedAt: Date.now()
   })
@@ -1092,23 +1062,9 @@ export function _addSession(
     port,
     url,
     mode,
-    installationName,
-    bootTimeMs,
-    portRetries: retries?.portRetries ?? 0,
-    rebootRetries: retries?.rebootRetries ?? 0
+    installationName
   })
   sessionLifecycleEvents.emit('changed')
-  // Per-instance-boot telemetry (instance_started / snapshot_history), emitted
-  // from main since Desktop 2 tears the panel down before the old renderer
-  // callback could fire. Fire-and-forget; never blocks the launch.
-  if (_onInstanceStarted) {
-    _onInstanceStarted({
-      installationId: sourceInstallationId,
-      bootTimeMs,
-      portRetries: retries?.portRetries ?? 0,
-      rebootRetries: retries?.rebootRetries ?? 0
-    })
-  }
   // Stamps lastLaunchedAt + per-category recency so those surfaces needn't scan every record.
   installations
     .markLaunched(sourceInstallationId, (inst) => sourceMap[inst.sourceId]?.category)
@@ -1148,141 +1104,6 @@ export function hasRunningSessionForInstallation(installationId: string): boolea
     ([sessionId, session]) =>
       sessionId === installationId || session.sourceInstallationId === installationId
   ).some(Boolean)
-}
-
-/**
- * Build the installation snapshot/disk context for the
- * `get-installation-dd-context` IPC handler and the main-process
- * `instance_started` / `snapshot_history` telemetry. Returns the full latest
- * snapshot plus reconstructable per-transition diffs (capped to
- * `MAX_CONTEXT_BYTES`); callers scrub PII at the emit site. `null` when the
- * install is missing or has no install path.
- */
-export async function buildInstallationDdContext(installationId: string) {
-  const MAX_CONTEXT_BYTES = 200 * 1024
-  const inst = await installations.get(installationId)
-  if (!inst || !inst.installPath) return null
-
-  const entries = await listSnapshots(inst.installPath)
-  const latest = entries.length > 0 ? entries[0]!.snapshot : null
-
-  const copiedFrom = inst.copiedFrom as string | undefined
-  const copyReason = inst.copyReason as string | undefined
-
-  let diskFreeGb: number | null = null
-  let diskTotalGb: number | null = null
-  try {
-    const disk = await getDiskSpace(inst.installPath)
-    diskFreeGb = Math.round(disk.free / 1073741824)
-    diskTotalGb = Math.round(disk.total / 1073741824)
-  } catch {}
-
-  const result = {
-    installation_id: inst.id,
-    variant: (inst.variant as string) || '',
-    source_id: (inst.sourceId as string) || '',
-    update_channel: (inst.updateChannel as string) || 'stable',
-    comfyui_version: (inst.comfyuiVersion as string) || '',
-    ...(copiedFrom ? { copied_from: copiedFrom } : {}),
-    ...(copyReason ? { copy_reason: copyReason } : {}),
-    snapshot_count: entries.length,
-    disk_free_gb: diskFreeGb,
-    disk_total_gb: diskTotalGb,
-    latest_snapshot: latest
-      ? {
-          createdAt: latest.createdAt,
-          trigger: latest.trigger,
-          label: latest.label,
-          comfyui: {
-            // `ref`/`releaseTag` are static manifest values (the version the env
-            // shipped with) and don't move on in-place updates; read
-            // `formattedVersion` (resolved from `commit`) for what's running.
-            ref: latest.comfyui.ref,
-            commit: latest.comfyui.commit,
-            releaseTag: latest.comfyui.releaseTag,
-            variant: latest.comfyui.variant,
-            baseTag: latest.comfyui.baseTag ?? null,
-            commitsAhead: latest.comfyui.commitsAhead ?? null,
-            formattedVersion: formatSnapshotVersion(latest.comfyui, 'detail')
-          },
-          customNodes: latest.customNodes.map((n) => ({
-            id: n.id,
-            type: n.type,
-            dirName: n.dirName,
-            enabled: n.enabled,
-            version: n.version,
-            commit: n.commit
-          })),
-          pipPackages: latest.pipPackages,
-          pythonVersion: latest.pythonVersion,
-          updateChannel: latest.updateChannel
-        }
-      : null,
-    snapshot_diffs: [] as Array<Record<string, unknown>>
-  }
-
-  let runningSize = JSON.stringify(result).length
-  for (let i = 0; i < entries.length - 1; i++) {
-    const newer = entries[i]!.snapshot
-    const older = entries[i + 1]!.snapshot
-    const diff = diffSnapshots(older, newer)
-    const entry: Record<string, unknown> = {
-      createdAt: newer.createdAt,
-      trigger: newer.trigger,
-      label: newer.label,
-      nodesAdded: diff.nodesAdded.map((n) => ({
-        id: n.id,
-        type: n.type,
-        dirName: n.dirName,
-        enabled: n.enabled,
-        version: n.version,
-        commit: n.commit
-      })),
-      nodesRemoved: diff.nodesRemoved.map((n) => ({
-        id: n.id,
-        type: n.type,
-        dirName: n.dirName,
-        enabled: n.enabled,
-        version: n.version,
-        commit: n.commit
-      })),
-      nodesChanged: diff.nodesChanged.map((n) => ({ id: n.id, from: n.from, to: n.to })),
-      pipsAdded: diff.pipsAdded,
-      pipsRemoved: diff.pipsRemoved,
-      pipsChanged: diff.pipsChanged,
-      comfyuiChanged: diff.comfyuiChanged,
-      updateChannelChanged: diff.updateChannelChanged
-    }
-    if (diff.comfyui) {
-      // `formattedVersion` is the resolved version per side; `ref` is the static
-      // manifest value. See the latest-snapshot comfyui note above.
-      entry.comfyui = {
-        from: {
-          ref: diff.comfyui.from.ref,
-          commit: diff.comfyui.from.commit,
-          baseTag: diff.comfyui.from.baseTag ?? null,
-          commitsAhead: diff.comfyui.from.commitsAhead ?? null,
-          formattedVersion: diff.comfyui.from.formattedVersion
-        },
-        to: {
-          ref: diff.comfyui.to.ref,
-          commit: diff.comfyui.to.commit,
-          baseTag: diff.comfyui.to.baseTag ?? null,
-          commitsAhead: diff.comfyui.to.commitsAhead ?? null,
-          formattedVersion: diff.comfyui.to.formattedVersion
-        }
-      }
-    }
-    if (diff.updateChannel) {
-      entry.updateChannel = diff.updateChannel
-    }
-    const entrySize = JSON.stringify(entry).length + 1
-    if (runningSize + entrySize > MAX_CONTEXT_BYTES) break
-    result.snapshot_diffs.push(entry)
-    runningSize += entrySize
-  }
-
-  return result
 }
 
 // Git queries run through a bundled-Python (pygit2) subprocess per call, and
@@ -1647,14 +1468,6 @@ export function getSessionProcess(installationId: string): ChildProcess | null {
   return _runningSessions.get(installationId)?.proc ?? null
 }
 
-/** Epoch ms when the running session was registered (`_addSession`), i.e. the
- *  server-ready moment. Used by the canvas-rendered telemetry to measure
- *  server-ready → first canvas paint. `null` if no session is running for the
- *  id (e.g. the page reloaded after a stop). */
-export function getSessionStartedAt(installationId: string): number | null {
-  return _runningSessions.get(installationId)?.startedAt ?? null
-}
-
 export function hasActiveOperations(): boolean {
   return _runningSessions.size > 0 || _operationAborts.size > 0 || getActiveDownloads().length > 0
 }
@@ -1681,18 +1494,13 @@ export async function getActiveDetails(): Promise<QuitActiveItem[]> {
 /** Test-only: register a synthetic running session without spawning ComfyUI. Mirrors
  *  `_addSession`'s side effects so the REQUIRES_STOPPED guard fires; `stopRunning` handles
  *  the null `proc`. Called only via `__e2e.seedRunningSession`. */
-export function _test_addRunningSession(
-  installationId: string,
-  installationName: string,
-  flushTelemetry?: () => void
-): void {
+export function _test_addRunningSession(installationId: string, installationName: string): void {
   _runningSessions.set(installationId, {
     proc: null,
     port: 0,
     url: undefined,
     mode: 'window',
     installationName,
-    flushTelemetry,
     startedAt: Date.now()
   })
   _broadcastToRenderer('instance-started', {
@@ -1718,15 +1526,5 @@ export function cancelAll(): void {
     abort.abort()
   }
   _operationAborts.clear()
-  // `before-quit` starts draining PostHog before asynchronous process kills
-  // settle. Queue each session's final summary synchronously so shutdown cannot
-  // clear the client before the process-exit handlers get a chance to flush.
-  for (const session of _runningSessions.values()) {
-    try {
-      session.flushTelemetry?.()
-    } catch {
-      // Telemetry must never block application teardown.
-    }
-  }
   void stopRunning()
 }

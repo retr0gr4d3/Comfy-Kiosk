@@ -80,7 +80,7 @@ test.beforeAll(async () => {
   gitIn(comfyuiDir, ['commit', '--quiet', '-m', 'staged commit'])
 
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
   })
   await expectChooserVisible(ctx.panel)
 

@@ -22,7 +22,6 @@ function decision(over: Partial<NavDecision>): NavDecision {
     verb: 'switch',
     primaryLabel: 'instancePicker.switch',
     secondary: [],
-    telemetry: null,
     ...over
   }
 }

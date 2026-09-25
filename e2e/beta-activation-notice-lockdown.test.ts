@@ -99,13 +99,7 @@ async function lockdownEngaged(titleBar: WebContentsPage): Promise<boolean> {
   return !bell && !pill
 }
 
-const UNREACHABLE_POSTHOG_HOST = 'http://127.0.0.1:1'
-let previousPosthogHost: string | undefined
-
 test.beforeAll(async () => {
-  previousPosthogHost = process.env['POSTHOG_HOST']
-  process.env['POSTHOG_HOST'] = UNREACHABLE_POSTHOG_HOST
-
   installPath = await mkdtemp(path.join(os.tmpdir(), 'comfyui-beta-notice-lockdown-'))
   port = await reserveFreePort()
   await writeFakeComfyInstall({ installPath, port })
@@ -113,7 +107,6 @@ test.beforeAll(async () => {
   ctx = await launchApp({
     settings: {
       firstUseCompleted: true,
-      telemetryEnabled: true,
       betaFeaturesEnabled: true,
       // Spent deliberately: the hint-versus-notice collision is
       // `beta-activation-notice-firstrun.test.ts`'s job, and leaving it unspent here would
@@ -148,8 +141,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await ctx?.cleanup()
   if (installPath) await rm(installPath, { recursive: true, force: true })
-  if (previousPosthogHost === undefined) delete process.env['POSTHOG_HOST']
-  else process.env['POSTHOG_HOST'] = previousPosthogHost
 })
 
 test('first-use lockdown never costs the user the beta notice @linux', async () => {

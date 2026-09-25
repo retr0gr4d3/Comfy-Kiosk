@@ -228,7 +228,7 @@ describe('SettingsSectionList', () => {
         editable: true,
         editType: 'boolean',
         turnOnDisabled,
-        turnOnDisabledTooltipKey: 'tooltips.betaFeaturesNeedTelemetry'
+        turnOnDisabledTooltipKey: 'tooltips.snapshots'
       }
     }
 
@@ -236,15 +236,15 @@ describe('SettingsSectionList', () => {
       const wrapper = mountList([betaField(false, true)])
       const toggle = wrapper.findComponent(BooleanToggle)
       expect(toggle.props('turnOnDisabled')).toBe(true)
-      expect(toggle.props('turnOnDisabledTooltipKey')).toBe('tooltips.betaFeaturesNeedTelemetry')
+      expect(toggle.props('turnOnDisabledTooltipKey')).toBe('tooltips.snapshots')
     })
 
     it('blocks an off row and resolves the tooltip key against the catalog', async () => {
       const wrapper = mountList([betaField(false, true)])
       const button = wrapper.find('button[role="switch"]')
       expect(button.attributes('aria-disabled')).toBe('true')
-      expect(button.attributes('title')).toBe(en.tooltips.betaFeaturesNeedTelemetry)
-      expect(button.attributes('title')).not.toBe('tooltips.betaFeaturesNeedTelemetry')
+      expect(button.attributes('title')).toBe(en.tooltips.snapshots)
+      expect(button.attributes('title')).not.toBe('tooltips.snapshots')
 
       await button.trigger('click')
       expect(wrapper.emitted('update-field')).toBeFalsy()
@@ -281,7 +281,7 @@ describe('SettingsSectionList', () => {
 
       const description = wrapper.find(`#${describedBy}`)
       expect(description.exists()).toBe(true)
-      expect(description.text()).toBe(en.tooltips.betaFeaturesNeedTelemetry)
+      expect(description.text()).toBe(en.tooltips.snapshots)
     })
 
     it('keeps the blocked styling hook after dropping the disabled attribute', () => {

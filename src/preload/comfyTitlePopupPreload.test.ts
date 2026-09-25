@@ -36,7 +36,7 @@ function validSnapshot(): PopupGlobalSettingsSnapshot {
     initialTab: null,
     languageFields: [],
     generalFields: [],
-    telemetryFields: [],
+    betaFields: [],
     desktopUpdateFields: [],
     cacheFields: [],
     advancedFields: [],
@@ -44,7 +44,6 @@ function validSnapshot(): PopupGlobalSettingsSnapshot {
     installLocationFields: [],
     modelsDirs: [],
     modelsSystemDefault: '',
-    telemetryGranted: false,
     appUpdate: {
       state: {},
       progress: null,
@@ -85,27 +84,10 @@ describe('global-settings snapshot guard', () => {
     mocks.on.mockClear()
   })
 
-  it('accepts a snapshot carrying a boolean telemetryGranted', () => {
+  it('accepts a well-formed snapshot', () => {
     const snapshot = validSnapshot()
-    snapshot.telemetryGranted = true
 
     expect(deliver(snapshot)).toEqual([snapshot])
-  })
-
-  // Without a guard entry the property crosses the bridge untyped and reaches
-  // the view as `undefined`, which todo 16's entry rule would read as "granted".
-  it('rejects a snapshot with telemetryGranted missing', () => {
-    const { telemetryGranted: _dropped, ...withoutGrant } = validSnapshot()
-
-    expect(deliver(withoutGrant)).toEqual([])
-  })
-
-  it('rejects a truthy non-boolean telemetryGranted', () => {
-    expect(deliver({ ...validSnapshot(), telemetryGranted: 'true' })).toEqual([])
-  })
-
-  it('rejects a null telemetryGranted', () => {
-    expect(deliver({ ...validSnapshot(), telemetryGranted: null })).toEqual([])
   })
 
   it('still rejects snapshots that fail the pre-existing field checks', () => {

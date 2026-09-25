@@ -16,9 +16,7 @@ import type {
 import { stripVariantPrefix, sortedCardOptions } from '../lib/variants'
 import { DEFAULT_INSTALL_NAME } from '../../../shared/defaultInstallName'
 import { PERSONAL_WORKSPACE_ID, workspaceContextId } from '../../../shared/workspaces'
-import { emitTelemetryAction, toSizeBucket, toVariantBucket, toErrorBucket } from '../lib/telemetry'
 import {
-  trackGuardrailBlocked,
   createDiskSpaceChecker,
   showPathIssueAlerts,
   checkNvidiaDriverOrWarn,
@@ -261,27 +259,6 @@ const estimatedInstallSize = computed(() => {
   return downloadBytes > 0 ? Math.ceil(downloadBytes * 2.25) : 0
 })
 
-/** Entrypoint that opened this wizard, for the handoff funnel events (#1224). */
-const entrypoint = ref('unknown')
-/** Flipped true once this wizard session reaches a TERMINAL handoff outcome:
- *  install.dispatched, dispatch_no_entry, or back_to_local_branch. Guards the
- *  onBeforeUnmount `wizard_cancelled` emit so exactly one *terminal* event
- *  fires per open. `add_installation_failed` is an attempt-level failure - it
- *  intentionally leaves this false so a later retry (-> dispatched) or give-up
- *  (-> wizard_cancelled) is still recorded as the true terminal outcome. */
-const resolved = ref(false)
-
-/** Shared context for the install-handoff funnel events (#1224). */
-function installHandoffProps(): Record<string, string | boolean | null> {
-  const variantId = selections.value.variant?.data?.variantId as string | undefined
-  return {
-    entrypoint: entrypoint.value,
-    source_id: managedBuildMode.value ? 'platform' : (currentSource.value?.id ?? null),
-    variant: variantId ? toVariantBucket(variantId) : null,
-    express: false
-  }
-}
-
 const NO_TEMPLATE_VALUE = 'none'
 
 /** The selected starter template option (excludes the "None" sentinel). */
@@ -295,8 +272,6 @@ const templateHasModels = computed(() => {
   const size = selectedTemplate.value?.data?.sizeBytes as number | undefined
   return typeof size === 'number' && size > 0
 })
-
-const templateIsApiNode = computed(() => isApiNodeTemplate(selectedTemplate.value))
 
 /** Proactive disk guard - shares `isTemplateDiskBlocked` with TemplatePickerStep
  *  so the alert, the disabled Install button, and the save-time hard block can't
@@ -367,18 +342,7 @@ const shouldShowPickerStep = computed(
 )
 
 function selectTemplate(option: FieldOption): void {
-  const prev = selections.value.bundledTemplate?.value
   selections.value.bundledTemplate = option
-  // Emit only on real (non-`None`) picks, and only on a value change so
-  // re-clicking the already-selected row doesn't inflate the event count.
-  if (option.value !== NO_TEMPLATE_VALUE && option.value !== prev) {
-    const sizeBytes = (option.data?.sizeBytes as number | undefined) ?? 0
-    emitTelemetryAction('comfy.desktop.template.selected', {
-      template_id: option.value,
-      size_bucket: toSizeBucket(sizeBytes),
-      is_api_node: isApiNodeTemplate(option)
-    })
-  }
 }
 
 /** Configure's primary button: advance to the picker step, or install directly
@@ -391,11 +355,6 @@ async function handleConfigureContinue(): Promise<void> {
     // its models) they never chose.
     if (instPath.value) fetchDiskSpace(instPath.value)
     step.value = 'template'
-    emitTelemetryAction('comfy.desktop.template.picker_shown', {
-      template_count: templateOptions.value.length,
-      has_local_install: hasLocalInstall.value,
-      default_template_id: selections.value.bundledTemplate?.value ?? null
-    })
     return
   }
   await handleSave()
@@ -410,25 +369,12 @@ async function handleTemplateInstall(): Promise<void> {
     nudgeTemplateAlert()
     return
   }
-  const tpl = selectedTemplate.value
-  emitTelemetryAction('comfy.desktop.template.install_confirmed', {
-    template_id: tpl?.value ?? NO_TEMPLATE_VALUE,
-    size_bucket: toSizeBucket((tpl?.data?.sizeBytes as number | undefined) ?? 0),
-    has_models: templateHasModels.value,
-    is_api_node: templateIsApiNode.value,
-    dont_show_again: dontShowTemplatePicker.value
-  })
   await persistDontShowAgain()
   await handleSave()
 }
 
 /** Picker's "Skip & Install": no template, then install. */
 async function handleTemplateSkip(): Promise<void> {
-  emitTelemetryAction('comfy.desktop.template.skipped', {
-    had_template_selected: !!selectedTemplate.value,
-    candidate_template_id: selectedTemplate.value?.value ?? null,
-    dont_show_again: dontShowTemplatePicker.value
-  })
   const none = templateOptions.value.find((o) => o.value === NO_TEMPLATE_VALUE)
   if (none) selections.value.bundledTemplate = none
   await persistDontShowAgain()
@@ -547,18 +493,6 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  // Onboarding->install drop-off (#1224): the wizard is unmounting without a
-  // resolved handoff outcome, so the user left the install path without
-  // dispatching. `skipInstall` sources (Remote Connection) never install, so
-  // they're not part of this funnel. The happy-path dispatch, the defensive
-  // no-entry close, and the Back-to-onboarding navigation all set `resolved`
-  // first, so this only catches genuine abandonment (✕ / dismiss).
-  if (!resolved.value && !currentSource.value?.skipInstall) {
-    emitTelemetryAction('comfy.desktop.install.not_started', {
-      ...installHandoffProps(),
-      reason: 'wizard_cancelled'
-    })
-  }
   if (returnFocusTo && document.contains(returnFocusTo)) {
     returnFocusTo.focus()
   }
@@ -566,23 +500,14 @@ onBeforeUnmount(() => {
   clearTimeout(templateNudgeTimer)
 })
 
-/** Configure footer Back link (first-use chain only). Records that install
- *  didn't start here and marks the outcome resolved so the unmount that
- *  follows doesn't also report `wizard_cancelled`. */
+/** Configure footer Back link (first-use chain only). */
 function handleBackToLocalBranch(): void {
-  resolved.value = true
-  emitTelemetryAction('comfy.desktop.install.not_started', {
-    ...installHandoffProps(),
-    reason: 'back_to_local_branch'
-  })
   emit('back-to-local-branch')
 }
 
 interface OpenOpts {
   /** Set when opened via the first-use localBranch -> Start Fresh path; surfaces a Back link that returns to localBranch instead of closing. */
   cameFromLocalBranch?: boolean
-  /** Where this wizard was opened from (`first_use`, `chooser`, `titlebar`, `url`); carried onto the install.dispatched / install.not_started funnel events. */
-  entrypoint?: string
   /** Active workspace whose compatible Builds replace the generic source controls. */
   workspaceId?: string
 }
@@ -598,8 +523,6 @@ async function open(opts: OpenOpts = {}): Promise<void> {
   selectedBuildId.value = ''
   selectedBuildTargetId.value = ''
   cameFromLocalBranch.value = opts.cameFromLocalBranch === true
-  entrypoint.value = opts.entrypoint ?? 'unknown'
-  resolved.value = false
   suggestedName.value = ''
   instPath.value = ''
   selections.value = {}
@@ -819,7 +742,6 @@ async function selectSourceCard(source: Source): Promise<void> {
     hardwareWarning.value = hardwareValidation.warning ?? ''
   }
   if (source.id === 'standalone' && hardwareValidation && !hardwareValidation.supported) {
-    trackGuardrailBlocked('unsupported_hw', 'wizard', 'source_select')
     await modal.alert({
       title: t('newInstall.unsupportedHardwareTitle'),
       message: hardwareValidation.error || ''
@@ -828,11 +750,6 @@ async function selectSourceCard(source: Source): Promise<void> {
   }
 
   await selectSource(source)
-  emitTelemetryAction('comfy.desktop.install.method.selected', {
-    source_id: source.id,
-    source_category: source.category || source.id,
-    flow: 'wizard'
-  })
 }
 
 /** Drop all source-scoped wizard state (source, selections, loaded field
@@ -999,15 +916,6 @@ function handleFieldSelectChange(field: SourceField, fieldIndex: number, value: 
 
 function selectCardOption(field: SourceField, fieldIndex: number, option: FieldOption): void {
   selections.value[field.id] = option
-  if (field.id === 'variant') {
-    emitTelemetryAction('comfy.desktop.install.variant.selected', {
-      variant_bucket: toVariantBucket(
-        (option.data?.variantId as string | undefined) || option.value
-      ),
-      recommended: !!option.recommended,
-      flow: 'wizard'
-    })
-  }
 
   const source = currentSource.value
   if (!source) return
@@ -1052,33 +960,18 @@ async function validateSelectedInstallRoot(): Promise<boolean> {
   if (!instPath.value) return true
   try {
     const issues = await window.api.validateInstallPath(instPath.value)
-    return showPathIssueAlerts(issues, 'wizard', 'save', modal.alert, t)
+    return showPathIssueAlerts(issues, modal.alert, t)
   } catch {
     return true
   }
 }
 
-async function handOffInstall(
-  result: InstallBuildResult,
-  failureTitle: string,
-  templateSelected: boolean
-): Promise<void> {
+async function handOffInstall(result: InstallBuildResult, failureTitle: string): Promise<void> {
   if (!result.ok) {
-    emitTelemetryAction('comfy.desktop.install.not_started', {
-      ...installHandoffProps(),
-      reason: 'add_installation_failed',
-      error_bucket: toErrorBucket(result.message || '')
-    })
     await modal.alert({ title: failureTitle, message: result.message || '' })
     return
   }
   if (result.entry) {
-    resolved.value = true
-    emitTelemetryAction('comfy.desktop.install.dispatched', {
-      ...installHandoffProps(),
-      installation_id: result.entry.id,
-      template_selected: templateSelected
-    })
     emit('show-progress', {
       installationId: result.entry.id,
       title: `${t('newInstall.installing')} - ${result.entry.name}`,
@@ -1088,12 +981,6 @@ async function handOffInstall(
     })
     return
   }
-  resolved.value = true
-  emitTelemetryAction('comfy.desktop.install.not_started', {
-    ...installHandoffProps(),
-    reason: 'dispatch_no_entry',
-    installation_id: null
-  })
   emit('close')
 }
 
@@ -1108,7 +995,6 @@ async function handleWorkspaceBuildSave(): Promise<void> {
         !(await checkDiskSpaceOrWarn({
           path: instPath.value,
           estimatedRequired: estimatedInstallSize.value,
-          flow: 'wizard',
           confirm: modal.confirm,
           t
         }))
@@ -1136,7 +1022,7 @@ async function handleWorkspaceBuildSave(): Promise<void> {
       ok: false,
       message: error instanceof Error ? error.message : String(error)
     }))
-  await handOffInstall(result, t('errors.installFailed'), false)
+  await handOffInstall(result, t('errors.installFailed'))
 }
 
 async function handleSave(): Promise<void> {
@@ -1151,7 +1037,7 @@ async function handleSave(): Promise<void> {
   if (source.id === 'standalone') {
     const variantId = selections.value.variant?.data?.variantId as string | undefined
     if (variantId && stripVariantPrefix(variantId).startsWith('nvidia')) {
-      if (!(await checkNvidiaDriverOrWarn('wizard', 'save', modal.confirm, t))) {
+      if (!(await checkNvidiaDriverOrWarn(modal.confirm, t))) {
         return
       }
     }
@@ -1209,7 +1095,6 @@ async function handleSave(): Promise<void> {
         !(await checkDiskSpaceOrWarn({
           path: instPath.value,
           estimatedRequired,
-          flow: 'wizard',
           confirm: modal.confirm,
           t
         }))
@@ -1228,7 +1113,6 @@ async function handleSave(): Promise<void> {
       !(await checkTemplateDiskOrBlock({
         path: instPath.value,
         estimatedModelBytes: modelBytes,
-        flow: 'wizard',
         alert: modal.alert,
         t
       }))
@@ -1244,7 +1128,7 @@ async function handleSave(): Promise<void> {
     status: 'installing',
     ...(workspaceId.value ? { workspaceId: workspaceId.value } : {})
   })
-  await handOffInstall(result, t('errors.cannotAdd'), templateHasModels.value)
+  await handOffInstall(result, t('errors.cannotAdd'))
 }
 
 function getSelectOptions(field: SourceField): BaseSelectOption[] {

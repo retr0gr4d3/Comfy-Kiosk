@@ -11,7 +11,6 @@ import BrandVariantList from '../components/BrandVariantList.vue'
 import BrandTakeoverLayout from '../components/BrandTakeoverLayout.vue'
 import TakeoverBack from '../components/TakeoverBack.vue'
 import { BaseSelect, type BaseSelectOption } from '../components/ui'
-import { emitTelemetryAction, toVariantBucket } from '../lib/telemetry'
 
 const emit = defineEmits<{
   close: []
@@ -255,11 +254,6 @@ function handleClearPreview(): void {
 
 function selectVariant(option: FieldOption): void {
   selectedVariant.value = option
-  emitTelemetryAction('comfy.desktop.install.variant.selected', {
-    variant_bucket: toVariantBucket((option.data?.variantId as string | undefined) || option.value),
-    recommended: !!option.recommended,
-    flow: 'snapshot'
-  })
 }
 
 async function handleCreate(): Promise<void> {

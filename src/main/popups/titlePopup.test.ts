@@ -28,17 +28,12 @@ vi.mock('electron', () => ({
   nativeTheme: { on: vi.fn(), shouldUseDarkColors: false }
 }))
 
-// The menu-click handler emits PostHog Node telemetry on every activation;
-// stub it so the dispatch tests stay pure and don't bootstrap the SDK.
-vi.mock('../lib/telemetry', () => ({ emit: vi.fn() }))
-
 vi.mock('../lib/ipc/registerSettingsHandlers', async () => ({
   ...(await vi.importActual('../lib/ipc/registerSettingsHandlers')),
   applySettingSet: vi.fn()
 }))
 
 import {
-  _test_buildGlobalSettingsSnapshot,
   _test_deleteTitlePopupEntry,
   _test_setTitlePopupEntry,
   activateTitlePopupMenuItem,
@@ -57,7 +52,6 @@ import {
 } from './titlePopup'
 import { comfyWindows, nextWindowKey, type ComfyWindowEntry } from '../host/registry'
 import { applySettingSet } from '../lib/ipc/registerSettingsHandlers'
-import * as settings from '../settings'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -854,37 +848,5 @@ describe('global settings IPC handlers', () => {
   it('rejects an unknown sender setting models directories', () => {
     expect(setModelsDirs(eventFor(999), { dirs: ['/a'] })).toEqual({ ok: false })
     expect(applySettingSet).not.toHaveBeenCalled()
-  })
-})
-
-// `telemetryGranted` is a TOP-LEVEL snapshot property, not a settings field:
-// todo 16's toggle needs the raw consent state to decide whether opting in is
-// even offered, and a `DetailField` can only carry the beta value itself.
-describe('buildGlobalSettingsSnapshot telemetry grant', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  function snapshotWithConsent(consent: unknown): { telemetryGranted: boolean } {
-    const actualGet = settings.get
-    vi.spyOn(settings, 'get').mockImplementation(((key: string) =>
-      key === 'telemetryEnabled' ? consent : actualGet(key)) as typeof settings.get)
-    // Stubbed so building a snapshot never seeds (and persists) the real store.
-    vi.spyOn(settings, 'resolveBetaFeaturesEnabled').mockReturnValue(false)
-    return _test_buildGlobalSettingsSnapshot()
-  }
-
-  it('grants only on an explicit opt-in', () => {
-    expect(snapshotWithConsent(true).telemetryGranted).toBe(true)
-  })
-
-  // Strictly `=== true`: the telemetry FIELD coerces undefined to enabled via
-  // `!== false`, and reusing that here would report a grant nobody gave.
-  it('does not grant when consent was never recorded', () => {
-    expect(snapshotWithConsent(undefined).telemetryGranted).toBe(false)
-  })
-
-  it('does not grant on an explicit opt-out', () => {
-    expect(snapshotWithConsent(false).telemetryGranted).toBe(false)
   })
 })

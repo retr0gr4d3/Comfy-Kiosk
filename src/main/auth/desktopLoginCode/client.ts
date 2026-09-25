@@ -37,8 +37,6 @@ export class DesktopLoginCodeError extends Error {
 }
 
 export interface CreateDesktopLoginCodeRequest {
-  /** Telemetry machine hash; included only when consent is granted. */
-  installation_id?: string
   platform: string
   app_version: string
   /** S256 challenge for the desktop-held code verifier. */

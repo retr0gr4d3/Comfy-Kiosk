@@ -32,7 +32,6 @@ vi.mock('../settings', () => {
     has: vi.fn((key: string) => store[key] !== undefined && store[key] !== null),
     getAll: vi.fn(() => ({ ...store })),
     getMirrorConfig: vi.fn(() => ({ pypiMirror: undefined, useChineseMirrors: false })),
-    getTrackedSettingsTelemetryProperties: vi.fn(() => ({})),
     __store: store
   }
 })
@@ -132,14 +131,6 @@ vi.mock('../installations', () => {
   }
 })
 
-vi.mock('./telemetry', () => ({
-  capture: vi.fn(),
-  captureInstallCompleted: vi.fn(),
-  registerPersonProperties: vi.fn(),
-  bucketError: vi.fn(() => 'other'),
-  trackedStep: vi.fn(async (_step: string, _ctx: unknown, fn: () => Promise<unknown>) => fn())
-}))
-
 vi.mock('./github-mirror', () => ({
   getComfyUIRemoteUrl: vi.fn(() => 'https://github.com/Comfy-Org/ComfyUI.git')
 }))
@@ -160,7 +151,6 @@ import {
 import type { DesktopInstallInfo } from './desktopDetect'
 import * as settings from '../settings'
 import * as installations from '../installations'
-import * as telemetry from './telemetry'
 
 // Test-only helpers exposed by the mock factories above.
 interface SettingsMock {
@@ -710,11 +700,6 @@ describe('adoptDesktopInstall', () => {
         deps: { detectDesktopInstall: () => null }
       })
     ).rejects.toThrow('no-legacy-install')
-    expect(telemetry.trackedStep).toHaveBeenCalledWith(
-      'comfy.desktop.adopt.detect',
-      {},
-      expect.any(Function)
-    )
   })
 
   it('prefers pre-swap-copy when staged source is valid', async () => {
@@ -1096,23 +1081,6 @@ describe('adoptDesktopInstall', () => {
       // Marker stamped with the freshly minted install id
       const marker = fs.readFileSync(path.join(legacy.basePath, '.comfyui-desktop-2'), 'utf-8')
       expect(marker).toBe(record.id)
-      // Telemetry succeeded
-      expect(telemetry.capture).toHaveBeenCalledWith(
-        'comfy.desktop.adopt.succeeded',
-        expect.objectContaining({
-          adopted_source_mode: 'git-clone-fallback',
-          carried_keys: expect.arrayContaining(['telemetryEnabled', 'firstUseCompleted'])
-        })
-      )
-      // Once-per-install funnel event fired exactly once with method 'adopt'.
-      expect(telemetry.captureInstallCompleted).toHaveBeenCalledTimes(1)
-      expect(telemetry.captureInstallCompleted).toHaveBeenCalledWith({
-        installationId: record.id,
-        method: 'adopt',
-        express: false
-      })
-      // Telemetry consent carried from legacy SendStatistics
-      expect(settingsMock.__store['telemetryEnabled']).toBe(false)
       // First-use takeover skipped for adopted users.
       expect(settingsMock.__store['firstUseCompleted']).toBe(true)
       // Global shared dirs seeded to legacy workspace (v2 had nothing set).
@@ -1181,14 +1149,6 @@ describe('adoptDesktopInstall', () => {
       // Promoted out of the editable string.
       expect(record.launchArgs as string).not.toContain('--input-directory')
       expect(record.launchArgs as string).not.toContain('--output-directory')
-      // Telemetry notes which dirs were overridden.
-      expect(telemetry.capture).toHaveBeenCalledWith(
-        'comfy.desktop.adopt.succeeded',
-        expect.objectContaining({
-          adopted_path_override_input: true,
-          adopted_path_override_output: true
-        })
-      )
     } finally {
       legacy.cleanup()
     }
@@ -1218,20 +1178,6 @@ describe('adoptDesktopInstall', () => {
       expect(settingsMock.__store['chineseMirrorsPrompted']).toBe(true)
       // TorchInstallMirror has no v2 consumer, never stashed on the record.
       expect(record).not.toHaveProperty('adoptedTorchMirror')
-    } finally {
-      legacy.cleanup()
-    }
-  })
-
-  it('refreshes durable person properties for the settings it carries', async () => {
-    const legacy = buildFakeLegacy()
-    try {
-      // carryLegacySettings writes settings.json directly (bypassing
-      // applySettingSet), so it must refresh person properties itself.
-      const carried = { auto_install_updates: true, auto_install_updates_explicit: true }
-      vi.mocked(settings.getTrackedSettingsTelemetryProperties).mockReturnValueOnce(carried)
-      await adoptDesktopInstall({ tools: buildSilentTools(), deps: buildDeps({}, legacy.info) })
-      expect(telemetry.registerPersonProperties).toHaveBeenCalledWith(carried)
     } finally {
       legacy.cleanup()
     }
@@ -1274,12 +1220,6 @@ describe('adoptDesktopInstall', () => {
       expect(settingsMock.__store['inputDir']).toBe('/v2/chosen/input')
       // outputDir was NOT pre-set → it should still get carried.
       expect(settingsMock.__store['outputDir']).toBe(path.join(legacy.basePath, 'output'))
-      expect(telemetry.capture).toHaveBeenCalledWith(
-        'comfy.desktop.adopt.succeeded',
-        expect.objectContaining({
-          carry_skipped_keys: expect.arrayContaining(['pypiMirror', 'inputDir'])
-        })
-      )
     } finally {
       legacy.cleanup()
     }
@@ -1307,12 +1247,6 @@ describe('adoptDesktopInstall', () => {
       expect(record).not.toHaveProperty('adoptedComfyTagAtMigration')
       // autoUpdateComfyUI is opt-in; adopted installs stay off.
       expect(record.autoUpdateComfyUI).toBe(false)
-      expect(telemetry.capture).toHaveBeenCalledWith(
-        'comfy.desktop.adopt.succeeded',
-        expect.objectContaining({
-          adopted_comfy_tag_at_migration: null
-        })
-      )
     } finally {
       legacy.cleanup()
     }
@@ -1466,25 +1400,6 @@ describe('adoptDesktopInstall', () => {
     }
   })
 
-  it('does not overwrite telemetryEnabled when already set', async () => {
-    const legacy = buildFakeLegacy({
-      configFiles: {
-        'comfy.settings.json': JSON.stringify({ 'Comfy-Desktop.SendStatistics': false })
-      }
-    })
-    try {
-      settingsMock.__store['telemetryEnabled'] = true
-      const tools = buildSilentTools()
-      await adoptDesktopInstall({
-        tools,
-        deps: buildDeps({}, legacy.info)
-      })
-      expect(settingsMock.__store['telemetryEnabled']).toBe(true)
-    } finally {
-      legacy.cleanup()
-    }
-  })
-
   it('captures forensic snapshot under basePath/.snapshots', async () => {
     const legacy = buildFakeLegacy({ configFiles: { 'comfy.settings.json': '{}' } })
     try {
@@ -1597,10 +1512,6 @@ describe('adoptDesktopInstall', () => {
       const reconcileCall = installFilteredRequirementsMock.mock.calls[0]!
       expect(reconcileCall[0]).toBe(path.join(first.installPath, 'ComfyUI', 'requirements.txt'))
       expect(reconcileCall[1]).toBe(uvPath)
-      // install.completed fires once for the first adoption only — the
-      // idempotent re-run returns the existing record before runAdoption,
-      // so it must NOT re-fire the once-per-install funnel event.
-      expect(telemetry.captureInstallCompleted).toHaveBeenCalledTimes(1)
     } finally {
       legacy.cleanup()
     }
@@ -1650,17 +1561,12 @@ describe('adoptDesktopInstall', () => {
       const args = calledArgs as string[]
       expect(args.slice(0, 3)).toEqual(['pip', 'install', 'pygit2'])
       expect(args).toContain('--python')
-      // pygit2 result reported in telemetry succeeded payload.
-      expect(telemetry.capture).toHaveBeenCalledWith(
-        'comfy.desktop.adopt.succeeded',
-        expect.objectContaining({ requirements_pygit2_exit: 0 })
-      )
     } finally {
       legacy.cleanup()
     }
   })
 
-  it('records pygit2 install failure in telemetry without aborting adoption', async () => {
+  it('tolerates a pygit2 install failure without aborting adoption', async () => {
     const legacy = buildFakeLegacy({ configFiles: { 'comfy.settings.json': '{}' } })
     try {
       const uvPath = getLegacyVenvUvPath(legacy.basePath)
@@ -1678,10 +1584,6 @@ describe('adoptDesktopInstall', () => {
         deps: buildDeps({ cloneSourceFromGit: cloneFn }, legacy.info)
       })
       expect(record.adopted).toBe(true)
-      expect(telemetry.capture).toHaveBeenCalledWith(
-        'comfy.desktop.adopt.succeeded',
-        expect.objectContaining({ requirements_pygit2_exit: 99 })
-      )
     } finally {
       legacy.cleanup()
     }

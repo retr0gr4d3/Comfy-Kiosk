@@ -5,8 +5,6 @@ import { app } from 'electron'
 import { killProcTree } from './process'
 import { getBundledScriptPath } from './bundledScript'
 import { removeQuarantine, codesignBinaries } from '../sources/standalone/macRepair'
-import * as telemetry from './telemetry'
-import { buildErrorFields } from '../../shared/errorEvent'
 
 // ---------------------------------------------------------------------------
 // pygit2 fallback state + circuit breaker
@@ -81,16 +79,6 @@ export function resetPygit2State(): void {
 function disablePygit2(reason: string): void {
   if (_pygit2.status === 'disabled') return
   console.warn('[git] disabling pygit2 fallback:', reason)
-  // Fires exactly once per session when the circuit breaker trips after
-  // PYGIT2_MAX_FAILURES consecutive launch failures. Mirrored to Datadog
-  // for alerting - a spike here means a release broke the bundled
-  // Python env for a population of users (signing / quarantine /
-  // bootstrap-python copy drift).
-  const failures = _pygit2.status === 'healthy' ? _pygit2.failures : 0
-  telemetry.emit('comfy.desktop.pygit2.circuit_broken', {
-    reason_bucket: telemetry.bucketError(reason),
-    failures
-  })
   _pygit2 = { status: 'disabled', reason }
 }
 
@@ -178,11 +166,6 @@ async function repairEnvForPygit2(envDir: string): Promise<void> {
   if (_pygit2RepairedDirs.has(envDir)) return
   _pygit2RepairedDirs.add(envDir)
   if (!fs.existsSync(envDir)) return
-  // Fires at most once per env dir per session when the boot probe trips
-  // the macOS quarantine + codesign repair path. Adoption signal: how
-  // many users actually hit the broken-bundled-Python state we shipped
-  // #738 to fix. `result` flips to 'failed' if the repair itself throws.
-  let result: 'ok' | 'failed' = 'ok'
   const log = (msg: string): void => {
     console.log('[git] pygit2 repair:', msg.trim())
   }
@@ -192,10 +175,8 @@ async function repairEnvForPygit2(envDir: string): Promise<void> {
     log(`adhoc codesigning ${envDir}`)
     await codesignBinaries(envDir, log)
   } catch (err) {
-    result = 'failed'
     console.warn('[git] pygit2 repair failed:', err)
   }
-  telemetry.emit('comfy.desktop.pygit2.repair_attempted', { result })
 }
 
 /**
@@ -228,13 +209,6 @@ export async function tryConfigurePygit2Fallback(installPath: string): Promise<b
 
   if (!probe.ok) {
     console.warn(`[git] pygit2 fallback rejected for ${installPath}: ${probe.reason}`)
-    // Probe still failing AFTER any repair attempt - the user is in the
-    // broken state we shipped #738 to detect. Datadog-mirrored so ops
-    // can correlate with release / signing-cert changes.
-    telemetry.emit('comfy.desktop.pygit2.probe_failed', {
-      source: 'standalone',
-      ...buildErrorFields(probe.reason)
-    })
     return false
   }
 
@@ -282,10 +256,6 @@ export async function tryConfigureBootstrapPygit2(): Promise<boolean> {
 
   if (!probe.ok) {
     console.warn(`[git] bootstrap pygit2 rejected at ${pythonPath}: ${probe.reason}`)
-    telemetry.emit('comfy.desktop.pygit2.probe_failed', {
-      source: 'bootstrap',
-      ...buildErrorFields(probe.reason)
-    })
     return false
   }
 
@@ -1210,7 +1180,6 @@ export function isPygit2AuthFailure(result: ProcessResult): boolean {
  * system git is available, in which case the original pygit2 result is returned.
  */
 async function withSystemGitFallback(
-  op: string,
   pygit2Op: () => Promise<ProcessResult>,
   systemGitOp: () => Promise<ProcessResult>,
   sendOutput: (text: string) => void
@@ -1218,12 +1187,6 @@ async function withSystemGitFallback(
   const result = await pygit2Op()
   if (!isPygit2AuthFailure(result) || isForcePygit2()) return result
   if (!(await isSystemGitAvailable())) return result
-  // Measures how often the auth-failure fallback actually fires (e.g. corporate
-  // git configs that rewrite GitHub HTTPS to SSH, which bundled pygit2 can't use).
-  telemetry.emit('comfy.desktop.git.system_fallback', {
-    op,
-    error_bucket: telemetry.bucketError(result.stderr)
-  })
   sendOutput(
     '\npygit2 could not authenticate (your git config likely rewrites GitHub ' +
       'HTTPS to SSH, which the bundled pygit2 cannot use); retrying with system git...\n'
@@ -1247,7 +1210,6 @@ export function gitClone(
   if (isPygit2Configured()) {
     const runPygit2Spawn = makeRunPygit2(sendOutput, signal)
     return withSystemGitFallback(
-      'clone',
       () => runPygit2Spawn(['clone', url, dest]),
       systemGitClone,
       sendOutput
@@ -1296,7 +1258,6 @@ export function gitCheckoutCommit(
   if (isPygit2Configured()) {
     const runPygit2Spawn = makeRunPygit2(sendOutput, signal)
     return withSystemGitFallback(
-      'checkout',
       () => runPygit2Spawn(['checkout', repoPath, commit]),
       systemGitCheckout,
       sendOutput
@@ -1382,7 +1343,6 @@ export function gitFetchAndCheckout(
   if (isPygit2Configured()) {
     const runPygit2Spawn = makeRunPygit2(sendOutput, signal)
     return withSystemGitFallback(
-      'fetch-and-checkout',
       () => runPygit2Spawn(['fetch-and-checkout', repoPath, commit]),
       systemGitFetchAndCheckout,
       sendOutput

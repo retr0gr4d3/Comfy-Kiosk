@@ -70,7 +70,7 @@ test.beforeAll(async () => {
   execFileSync('git', ['init', '--quiet', comfyuiDir], { stdio: 'ignore' })
 
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
     installations: [
       {
         id: SOURCE_ID,

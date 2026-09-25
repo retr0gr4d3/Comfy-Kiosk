@@ -27,7 +27,6 @@ import { useAppUpdatePrompts } from '../composables/useAppUpdatePrompts'
 import { useReturnToDashboardConfirm } from '../composables/useReturnToDashboardConfirm'
 import { useSendFeedback } from '../composables/useSendFeedback'
 import { useAnnouncement } from '../composables/useAnnouncement'
-import { emitTelemetryAction } from '../lib/telemetry'
 import { useDeepLinkRouter } from '../composables/useDeepLinkRouter'
 import { useInstallContextMenu } from '../composables/useInstallContextMenu'
 import { useActionGuard } from '../composables/useActionGuard'
@@ -126,7 +125,7 @@ let chooserHandoff!: ReturnType<typeof useChooserHandoff>
 
 const firstUseChain = useFirstUseChain({
   dismissTakeoverDirect: () => overlays.dismissTakeoverDirect(),
-  switchPanel: (panel, entrypoint) => overlays.switchPanel(panel, entrypoint),
+  switchPanel: (panel) => overlays.switchPanel(panel),
   handleShowProgress: (showOpts) => overlays.handleShowProgress(showOpts),
   performChooserLaunch: (inst, onMissing) => chooserHandoff.performChooserLaunch(inst, onMissing),
   openFirstUseTakeover: (firstUseOpts) => overlays.openFirstUseTakeover(firstUseOpts),
@@ -455,14 +454,9 @@ onMounted(async () => {
       // The inner await chain is wrapped so a thrown / rejected confirm doesn't
       // strand main waiting forever on the response; the catch returns a
       // default `cleared: false` and the response always fires below.
-      const { cleared, reason } = await (async (): Promise<{
-        cleared: boolean
-        reason: 'in_flight' | 'running' | 'stopped' | 'crashed'
-      }> => {
+      const cleared = await (async (): Promise<boolean> => {
         try {
-          if (currentOverlay.value !== null) {
-            return { cleared: await closeOverlay(), reason: 'in_flight' }
-          }
+          if (currentOverlay.value !== null) return await closeOverlay()
           const id = installationId
           const inst = id ? (installationStore.getById(id) ?? null) : null
           const r: 'running' | 'crashed' | 'stopped' =
@@ -471,18 +465,12 @@ onMounted(async () => {
               : id && sessionStore.errorInstances.has(id)
                 ? 'crashed'
                 : 'stopped'
-          return { cleared: await confirmReturnToDashboard(inst, r), reason: r }
+          return await confirmReturnToDashboard(inst, r)
         } catch (err) {
           console.error('return-to-dashboard consult failed', err)
-          return { cleared: false, reason: 'stopped' }
+          return false
         }
       })()
-      if (cleared) {
-        emitTelemetryAction('comfy.desktop.instance.return_to_dashboard', {
-          from: 'menu',
-          reason
-        })
-      }
       window.api.respondReturnToDashboardRequest({ requestId, cleared })
     })()
   })
@@ -536,7 +524,7 @@ onMounted(async () => {
     // kick it open now — script-setup couldn't because the template
     // hadn't rendered yet.
     if (isFlowPanel(initialPanel)) {
-      void switchPanel(initialPanel, 'url')
+      void switchPanel(initialPanel)
     }
 
     // First-use takeover auto-mounts when the persisted gate is still

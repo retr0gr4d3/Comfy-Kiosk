@@ -9,7 +9,6 @@ import { DEFAULT_INSTALL_NAME } from '../../../shared/defaultInstallName'
 import { BaseSelect, type BaseSelectOption } from '../components/ui'
 
 import type { ProbeResult } from '../types/ipc'
-import { emitTelemetryAction, toCountBucket } from '../lib/telemetry'
 
 const emit = defineEmits<{
   close: []
@@ -214,11 +213,6 @@ async function handleSave(): Promise<void> {
     })
     return
   }
-  emitTelemetryAction('comfy.desktop.track_existing.saved', {
-    detected_source_label: selectedProbe.value.sourceLabel || 'unknown',
-    probe_count_bucket: toCountBucket(probeResults.value.length),
-    custom_name_used: trackName.value.trim().length > 0
-  })
   isOpen.value = false
   emit('close')
   emit('navigate-list')

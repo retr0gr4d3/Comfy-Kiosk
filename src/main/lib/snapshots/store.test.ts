@@ -19,10 +19,6 @@ vi.mock('../pythonEnv', () => ({
   getActivePythonPath: vi.fn(() => null)
 }))
 
-vi.mock('../telemetry', () => ({
-  emit: vi.fn()
-}))
-
 // Imports the R2 catalog (electron `net`, cacheDir) transitively — stub it
 // out so this unit test stays free of the Electron runtime.
 vi.mock('../../sources/standalone/torchStackCatalog', () => ({
@@ -71,10 +67,7 @@ import {
   listSnapshots,
   loadSnapshot
 } from './store'
-import * as telemetry from '../telemetry'
 import type { InstallationRecord } from '../../installations'
-
-const mockedTelemetryEmit = vi.mocked(telemetry.emit)
 
 const mockedReadGitHead = vi.mocked(readGitHead)
 const mockedScanCustomNodes = vi.mocked(scanCustomNodes)
@@ -244,66 +237,53 @@ describe('captureState commit-matching guard', () => {
   })
 })
 
-describe('saveSnapshot telemetry', () => {
+describe('saveSnapshot', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     mockedScanCustomNodes.mockResolvedValue([
-      { id: 'a', type: 'cnr', dirName: 'a', enabled: true, version: '1.0.0' },
-      { id: 'b', type: 'cnr', dirName: 'b', enabled: true, version: '2.0.0' }
+      { id: 'a', type: 'cnr', dirName: 'a', enabled: true, version: '1.0.0' }
     ])
     mockedReadGitHead.mockReturnValue('abc1234')
   })
 
-  it('emits comfy.desktop.snapshot.created with installation_id, trigger, counts, and dedup flag', async () => {
-    const installation = {
-      id: 'install-42',
-      name: 'Test',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      installPath: '/test/install',
-      sourceId: 'test'
-    } as InstallationRecord
+  const installation = {
+    id: 'install-42',
+    name: 'Test',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    installPath: '/test/install',
+    sourceId: 'test'
+  } as InstallationRecord
 
-    await saveSnapshot('/test/install', installation, 'manual', 'my label')
+  it('writes the captured state with its trigger and label', async () => {
+    const memory = installFsMemory()
 
-    expect(mockedTelemetryEmit).toHaveBeenCalledTimes(1)
-    expect(mockedTelemetryEmit).toHaveBeenCalledWith('comfy.desktop.snapshot.created', {
-      installation_id: 'install-42',
-      trigger: 'manual',
-      custom_nodes_count: 2,
-      // pip freeze is short-circuited by the python-path mock returning null
-      pip_packages_count: 0,
-      has_label: true,
-      // saveSnapshot never deduplicates a previous snapshot
-      deduplicated_previous: false
-    })
+    const filename = await saveSnapshot('/test/install', installation, 'manual', 'my label')
+
+    const written = [...memory.entries()].find(([p]) => p.endsWith(filename))
+    expect(written).toBeDefined()
+    const snapshot = JSON.parse(written![1])
+    expect(snapshot).toMatchObject({ trigger: 'manual', label: 'my label' })
+    expect(snapshot.customNodes).toHaveLength(1)
   })
 
-  it('reports has_label: false when no label is supplied', async () => {
-    const installation = {
-      id: 'install-7',
-      name: 'Test',
-      createdAt: '2026-01-01T00:00:00.000Z',
-      installPath: '/test/install',
-      sourceId: 'test'
-    } as InstallationRecord
+  it('stores a null label when none is supplied', async () => {
+    const memory = installFsMemory()
 
-    await saveSnapshot('/test/install', installation, 'pre-update')
+    const filename = await saveSnapshot('/test/install', installation, 'pre-update')
 
-    expect(mockedTelemetryEmit).toHaveBeenCalledWith(
-      'comfy.desktop.snapshot.created',
-      expect.objectContaining({ trigger: 'pre-update', has_label: false })
-    )
+    const written = [...memory.entries()].find(([p]) => p.endsWith(filename))
+    expect(JSON.parse(written![1])).toMatchObject({ trigger: 'pre-update', label: null })
   })
 })
 
-describe('captureSnapshotIfChanged telemetry', () => {
+describe('captureSnapshotIfChanged', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     mockedScanCustomNodes.mockResolvedValue([])
     mockedReadGitHead.mockReturnValue('abc1234')
   })
 
-  it('emits no telemetry when boot state matches the last snapshot (saved: false)', async () => {
+  it('does not save when boot state matches the last snapshot (saved: false)', async () => {
     const memory = installFsMemory()
     // Pre-seed `lastSnapshot` with a state that matches what `captureState`
     // will produce (manifest read fails → ref:'unknown', commit comes from
@@ -348,10 +328,9 @@ describe('captureSnapshotIfChanged telemetry', () => {
     const result = await captureSnapshotIfChanged('/test/install', installation, 'boot')
 
     expect(result.saved).toBe(false)
-    expect(mockedTelemetryEmit).not.toHaveBeenCalled()
   })
 
-  it('emits deduplicated_previous: true when restart collapses the prior intermediate snapshot', async () => {
+  it('reports the collapsed file when restart dedupes the prior intermediate snapshot', async () => {
     const memory = installFsMemory()
     // Pre-seed an intermediate restart snapshot (no label, same comfyui +
     // empty nodes) that should get collapsed by `deduplicateRestartSnapshot`
@@ -389,15 +368,6 @@ describe('captureSnapshotIfChanged telemetry', () => {
 
     expect(result.saved).toBe(true)
     expect(result.deduplicated).toBe(intermediateFilename)
-    expect(mockedTelemetryEmit).toHaveBeenCalledTimes(1)
-    expect(mockedTelemetryEmit).toHaveBeenCalledWith('comfy.desktop.snapshot.created', {
-      installation_id: 'install-9',
-      trigger: 'restart',
-      custom_nodes_count: 0,
-      pip_packages_count: 0,
-      has_label: false,
-      deduplicated_previous: true
-    })
   })
 })
 
@@ -475,10 +445,6 @@ describe('ensureCurrentSnapshotOnTop', () => {
     )
     expect(written.comfyui.commit).toBe('abc1234')
     expect(written.trigger).toBe('post-restore')
-    expect(mockedTelemetryEmit).toHaveBeenCalledWith(
-      'comfy.desktop.snapshot.created',
-      expect.objectContaining({ trigger: 'post-restore' })
-    )
   })
 
   it('is a no-op when the top snapshot already matches the live state', async () => {
@@ -489,7 +455,6 @@ describe('ensureCurrentSnapshotOnTop', () => {
 
     expect(result.saved).toBe(false)
     expect(result.filename).toBe('20250101_000000_000-boot-match.json')
-    expect(mockedTelemetryEmit).not.toHaveBeenCalled()
     // No new file written — only the seeded one remains.
     const files = [...memory.keys()].filter((k) => k.endsWith('.json'))
     expect(files).toHaveLength(1)

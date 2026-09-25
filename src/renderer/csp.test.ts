@@ -20,8 +20,9 @@ function readHtml(filename: string): string {
   return fs.readFileSync(path.resolve(__dirname, filename), 'utf-8')
 }
 
-const TELEMETRY_RENDERER_HTMLS = ['panel.html', 'comfyTitleBar.html'] as const
-const NON_TELEMETRY_RENDERER_HTMLS = [
+const RENDERER_HTMLS = [
+  'panel.html',
+  'comfyTitleBar.html',
   'comfyTitlePopup.html',
   'comfyTitleTooltip.html',
   'comfySystemModal.html'
@@ -32,15 +33,6 @@ describe('Content-Security-Policy: panel.html', () => {
 
   it('has a connect-src directive', () => {
     expect(csp['connect-src']).toBeDefined()
-  })
-
-  it('allows Datadog telemetry endpoints in connect-src', () => {
-    expect(csp['connect-src']).toContain('https://*.datadoghq.com')
-    expect(csp['connect-src']).toContain('https://browser-intake-us5-datadoghq.com')
-  })
-
-  it('allows PostHog telemetry endpoints in connect-src', () => {
-    expect(csp['connect-src']).toContain('https://*.posthog.com')
   })
 
   it('restricts script-src to self only', () => {
@@ -63,39 +55,20 @@ describe('Content-Security-Policy: panel.html', () => {
   })
 })
 
-describe.each(TELEMETRY_RENDERER_HTMLS)(
-  'Content-Security-Policy: telemetry endpoints in %s',
-  (file) => {
-    const csp = parseCSP(readHtml(file))
+describe.each(RENDERER_HTMLS)('Content-Security-Policy: no telemetry endpoints in %s', (file) => {
+  const csp = parseCSP(readHtml(file))
 
-    it('allows Datadog RUM intake', () => {
-      expect(csp['connect-src']).toContain('https://*.datadoghq.com')
-      expect(csp['connect-src']).toContain('https://browser-intake-us5-datadoghq.com')
-    })
+  // No renderer ships a telemetry SDK; the CSP is the tripwire that keeps it
+  // that way, so re-adding one would also need a CSP change here.
+  it('does NOT include Datadog endpoints', () => {
+    expect(csp['connect-src']).not.toContain('datadoghq.com')
+  })
 
-    it('allows PostHog Browser intake', () => {
-      expect(csp['connect-src']).toContain('https://*.posthog.com')
-    })
+  it('does NOT include PostHog endpoints', () => {
+    expect(csp['connect-src']).not.toContain('posthog.com')
+  })
 
-    it('restricts script-src to self', () => {
-      expect(csp['script-src']).toBe("'self'")
-    })
-  }
-)
-
-describe.each(NON_TELEMETRY_RENDERER_HTMLS)(
-  'Content-Security-Policy: telemetry endpoints intentionally absent from %s',
-  (file) => {
-    const csp = parseCSP(readHtml(file))
-
-    // These transient popups don't initialise Datadog/PostHog; the narrow CSP enforces
-    // that, so adding a telemetry SDK here would also need a CSP change (a useful tripwire).
-    it('does NOT include Datadog endpoints', () => {
-      expect(csp['connect-src']).not.toContain('datadoghq.com')
-    })
-
-    it('does NOT include PostHog endpoints', () => {
-      expect(csp['connect-src']).not.toContain('posthog.com')
-    })
-  }
-)
+  it('restricts script-src to self', () => {
+    expect(csp['script-src']).toBe("'self'")
+  })
+})

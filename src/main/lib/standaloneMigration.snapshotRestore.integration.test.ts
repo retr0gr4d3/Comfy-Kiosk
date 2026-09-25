@@ -35,11 +35,6 @@ vi.mock('./i18n', () => ({
     params ? `${key}:${JSON.stringify(params)}` : key
 }))
 
-vi.mock('./telemetry', () => ({
-  trackedStep: async <T>(_name: string, _ctx: unknown, fn: () => Promise<T>) => fn(),
-  emit: vi.fn()
-}))
-
 vi.mock('../settings', () => ({
   get: vi.fn(() => undefined),
   getMirrorConfig: vi.fn(() => ({ pypiMirror: undefined, useChineseMirrors: false }))

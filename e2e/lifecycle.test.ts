@@ -432,9 +432,7 @@ test('accept ToS + pick local (non-express) opens New Install takeover with form
     'Express Install checkbox did not uncheck',
   ).toBe(true)
 
-  // Tick the required ToS checkbox (telemetry stays at its default
-  // opt-in; the test settings already disable telemetry network egress
-  // separately, so the actual value doesn't matter here).
+  // Tick the required ToS checkbox.
   expect(await ctx.panel.click('[data-testid="first-use-consent-tos"]')).toBe(true)
   await ctx.panel.waitFor(
     async () => ctx.panel.evaluate<boolean>(

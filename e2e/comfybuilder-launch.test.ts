@@ -119,7 +119,7 @@ test.beforeAll(async () => {
   }
 
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
     installations: cases.map(buildRecord)
   })
   await expectChooserVisible(ctx.panel)

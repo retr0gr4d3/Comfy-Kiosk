@@ -190,9 +190,8 @@ export interface ComfyTitleBarBridge {
   clickInstallPill(anchor: TitleMenuAnchor): void
   /** Click handler for the title-bar Send Feedback button. Main
    *  resolves the host entry from the sender and forwards
-   *  `comfy-panel:open-feedback` to the panel renderer, which fires
-   *  the `comfy.desktop.feedback.opened` telemetry action and opens the
-   *  support URL via `openExternal`. */
+   *  `comfy-panel:open-feedback` to the panel renderer, which opens the
+   *  feedback modal. */
   clickFeedback(): void
   /** Click handler for the title-bar news bell. Main resolves the host
    *  entry from the sender and forwards `comfy-panel:open-announcement` to
@@ -492,11 +491,7 @@ const bridge: ComfyTitleBarBridge = {
 }
 
 // Expose the standard window.api bridge alongside __comfyTitleBar so the
-// title-bar renderer can call initializeRendererBootstrap() (which depends
-// on window.api.getSetting / getDeviceId / onTelemetrySettingChanged /
-// etc.). Without this, telemetry only fired from the panel renderer (which
-// only mounts in chooser/lifecycle modes), leaving steady-state ComfyUI
-// sessions invisible to Datadog and PostHog.
+// title-bar renderer can reach the shared settings / locale / theme APIs.
 //
 // The shared ./api import is safe here because the title-bar
 // WebContentsView opts out of the sandbox via sandbox: false in

@@ -9,7 +9,6 @@ import { useInstallContextMenu } from '../composables/useInstallContextMenu'
 import { useInstallList } from '../composables/useInstallList'
 import { useModal } from '../composables/useModal'
 import { useCloudGate } from '../composables/useCloudGate'
-import { emitTelemetryAction } from '../lib/telemetry'
 import { RefreshCw, Search } from 'lucide-vue-next'
 import ContextMenu from '../components/ContextMenu.vue'
 import WhyTryCloudModal from '../components/WhyTryCloudModal.vue'
@@ -160,7 +159,6 @@ const showNoMatches = computed(
 const refreshingWorkspace = computed(() => authStore.loadingWorkspaces || authStore.loadingBuilds)
 
 async function refreshWorkspace(): Promise<void> {
-  emitTelemetryAction('comfy.desktop.workspace.refresh', {})
   await Promise.all([authStore.fetchWorkspaces(), authStore.fetchBuilds()])
 }
 
@@ -242,16 +240,13 @@ const whyCloudOpen = ref(false)
 
 function openWhyCloud(): void {
   whyCloudOpen.value = true
-  emitTelemetryAction('comfy.desktop.dashboard.why_cloud_opened', {})
 }
 
 function dismissWhyCloud(): void {
   whyCloudOpen.value = false
-  emitTelemetryAction('comfy.desktop.dashboard.why_cloud_action', { action: 'dismiss' })
 }
 
 async function onWhyCloudTryCloud(): Promise<void> {
-  emitTelemetryAction('comfy.desktop.dashboard.why_cloud_action', { action: 'try_cloud' })
   if (await cloudGate.openCloud()) {
     whyCloudOpen.value = false
     return

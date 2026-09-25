@@ -3,7 +3,6 @@ import { setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ActionResult } from '../types/ipc'
-import type * as TelemetryModule from '../lib/telemetry'
 import { useProgressStore } from './progressStore'
 import { useSessionStore } from './sessionStore'
 
@@ -11,17 +10,6 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({
     t: (key: string) => key
   })
-}))
-
-// progressStore now emits `comfy.desktop.op.result` via `emitTelemetryAction`,
-// which dispatches a CustomEvent on `window`. The `vi.stubGlobal('window',
-// …)` below replaces window with a plain object that drops prototype
-// methods like `dispatchEvent`, so stub the telemetry helper out — these
-// tests cover op lifecycle, not telemetry dispatch. `toErrorBucket` is
-// kept real (pure function used inside the store's emit path).
-vi.mock('../lib/telemetry', async (importOriginal) => ({
-  ...(await importOriginal<typeof TelemetryModule>()),
-  emitTelemetryAction: vi.fn()
 }))
 
 vi.stubGlobal('window', {

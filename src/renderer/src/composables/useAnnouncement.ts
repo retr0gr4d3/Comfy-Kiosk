@@ -11,7 +11,7 @@ interface UseAnnouncementApi {
  * Title-bar news bell → main forwards `onOpenAnnouncement` here, mirroring the
  * Send Feedback flow (`useSendFeedback`). Opening marks the announcement seen
  * (persisted via `comfyRouterAnnouncementSeen`); the settings-changed broadcast
- * then clears the title-bar's unread dot. The modal owns its own telemetry.
+ * then clears the title-bar's unread dot.
  */
 export function useAnnouncement(): UseAnnouncementApi {
   const announcementOpen = ref(false)

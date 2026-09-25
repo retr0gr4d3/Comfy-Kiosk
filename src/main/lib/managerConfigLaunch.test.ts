@@ -7,10 +7,6 @@ vi.mock('../settings', () => ({
   get: vi.fn((key: string) => mockSettings[key])
 }))
 
-vi.mock('./telemetry', () => ({
-  capture: vi.fn()
-}))
-
 vi.mock('./managerConfig', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ensureManagerConfig: vi.fn(async () => {})
@@ -18,8 +14,6 @@ vi.mock('./managerConfig', async (importOriginal) => ({
 
 import { reconcileManagerConfigForLaunch } from './managerConfigLaunch'
 import { ensureManagerConfig } from './managerConfig'
-import * as telemetry from './telemetry'
-import { buildErrorFields } from '../../shared/errorEvent'
 
 const mockEnsure = vi.mocked(ensureManagerConfig)
 
@@ -127,12 +121,6 @@ describe('reconcileManagerConfigForLaunch', () => {
       ).resolves.toEqual({ ok: true })
 
       expect(warn).toHaveBeenCalledWith('Failed to reconcile ComfyUI-Manager config:', err)
-      // Exact match against the canonical scrubbed fields - a drift to an
-      // ad hoc (unsanitized) payload must fail here.
-      expect(telemetry.capture).toHaveBeenCalledWith(
-        'comfy.desktop.manager.config_seed_failed',
-        buildErrorFields(err)
-      )
     } finally {
       warn.mockRestore()
     }
@@ -153,10 +141,6 @@ describe('reconcileManagerConfigForLaunch', () => {
           securityLevel: 'strong'
         })
       ).resolves.toEqual({ ok: false, error: err })
-      expect(telemetry.capture).toHaveBeenCalledWith(
-        'comfy.desktop.manager.config_seed_failed',
-        buildErrorFields(err)
-      )
     } finally {
       warn.mockRestore()
     }

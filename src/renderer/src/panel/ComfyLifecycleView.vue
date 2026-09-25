@@ -7,7 +7,6 @@ import {
   useReturnToDashboardConfirm,
   type ReturnToDashboardReason
 } from '../composables/useReturnToDashboardConfirm'
-import { emitTelemetryAction } from '../lib/telemetry'
 import BrandFinishedSurface from '../components/BrandFinishedSurface.vue'
 import { TID } from '../../../shared/testIds'
 import type { Installation, ShowProgressOpts } from '../types/ipc'
@@ -210,19 +209,6 @@ const installationName = computed(() => props.installation?.name ?? '')
 
 function startLaunch(): void {
   if (!props.installationId) return
-  // Capture the recovery half of the lifecycle-resilience question: the
-  // crash itself fires from main (`comfyui.exited` with crashed=true);
-  // this complements it with "did the user actually re-launch after the
-  // crash?" plus the crash-to-relaunch wall clock.
-  if (state.value === 'crashed') {
-    const errorInfoSnapshot = sessionStore.errorInstances.get(props.installationId)
-    const crashedAtMs = errorInfoSnapshot?.crashedAtMs
-    emitTelemetryAction('comfy.desktop.instance.relaunched_after_crash', {
-      installation_id: props.installationId,
-      crash_to_relaunch_seconds:
-        crashedAtMs != null ? Math.round((Date.now() - crashedAtMs) / 1000) : null
-    })
-  }
   // The progress modal owns the launch lifecycle (start, status, port-conflict
   // resolution, cancel). Once the instance reaches 'started', main swaps the
   // body back to the live ComfyUI view automatically.
@@ -245,7 +231,6 @@ async function returnToDashboard(): Promise<void> {
   // Only the running race actually prompts; crashed/stopped pass through.
   const ok = await confirmReturnToDashboard(props.installation, reason)
   if (!ok) return
-  emitTelemetryAction('comfy.desktop.instance.return_to_dashboard', { from: 'lifecycle', reason })
   await window.api.returnToDashboard()
 }
 

@@ -1,6 +1,4 @@
 import * as settings from '../settings'
-import * as telemetry from './telemetry'
-import { buildErrorFields } from '../../shared/errorEvent'
 import { ensureManagerConfig, isManagerSecurityLevel, isManagerNetworkMode } from './managerConfig'
 
 export type ManagerReconcileResult = { ok: true } | { ok: false; error: unknown }
@@ -14,7 +12,7 @@ export type ManagerReconcileResult = { ok: true } | { ok: false; error: unknown 
  *  Failure policy: when the user chose a Manager option, a failed write must
  *  block the launch - starting anyway would run Manager with stale (possibly
  *  weaker) security settings while the UI claims the new value. Mirror-only
- *  seeding keeps the old non-blocking behavior (telemetry only): it is a
+ *  seeding keeps the old non-blocking behavior (logged only): it is a
  *  convenience, not a security boundary. */
 export async function reconcileManagerConfigForLaunch(opts: {
   remote: boolean
@@ -34,9 +32,6 @@ export async function reconcileManagerConfigForLaunch(opts: {
     return { ok: true }
   } catch (err) {
     console.warn('Failed to reconcile ComfyUI-Manager config:', err)
-    telemetry.capture('comfy.desktop.manager.config_seed_failed', {
-      ...buildErrorFields(err)
-    })
     if (securityLevel !== undefined || networkMode !== undefined) {
       return { ok: false, error: err }
     }

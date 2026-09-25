@@ -79,8 +79,7 @@ export function buildElectronApi(): ElectronApi {
     reorderInstallations: (orderedIds) => ipcRenderer.invoke('reorder-installations', orderedIds),
     probeInstallation: (dirPath) => ipcRenderer.invoke('probe-installation', dirPath),
     trackInstallation: (data) => ipcRenderer.invoke('track-installation', data),
-    installInstance: (installationId, express) =>
-      ipcRenderer.invoke('install-instance', installationId, express),
+    installInstance: (installationId) => ipcRenderer.invoke('install-instance', installationId),
     skipTemplateDownload: (installationId) =>
       ipcRenderer.invoke('skip-template-download', installationId),
     updateInstallation: (installationId, data) =>
@@ -129,10 +128,7 @@ export function buildElectronApi(): ElectronApi {
       return () => ipcRenderer.removeListener('comfy-panel:first-use-skip', handler)
     },
     onOpenFeedback: (callback) => {
-      const handler = (_event: IpcRendererEvent, data: unknown): void => {
-        const source = (data as { source?: unknown } | null)?.source
-        callback({ source: source === 'menu' ? 'menu' : 'titlebar' })
-      }
+      const handler = (): void => callback()
       ipcRenderer.on('comfy-panel:open-feedback', handler)
       return () => ipcRenderer.removeListener('comfy-panel:open-feedback', handler)
     },
@@ -235,10 +231,6 @@ export function buildElectronApi(): ElectronApi {
     relaunchApp: () => ipcRenderer.invoke('app:relaunch'),
     resetZoom: () => ipcRenderer.invoke('reset-zoom'),
     getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
-    getInstallationDdContext: (installationId: string) =>
-      ipcRenderer.invoke('get-installation-dd-context', installationId),
-    getInstallsInventory: () => ipcRenderer.invoke('get-installs-inventory'),
-    getDeviceId: () => ipcRenderer.invoke('get-device-id'),
 
     // Dev platform (cloud auth + comfy-builder). Tokens never cross IPC; these
     // only ever carry AuthStatus / Workspace / build display rows.
@@ -335,12 +327,6 @@ export function buildElectronApi(): ElectronApi {
         callback(data as Parameters<typeof callback>[0])
       ipcRenderer.on('terminal-exited', handler)
       return () => ipcRenderer.removeListener('terminal-exited', handler)
-    },
-    onComfyBootLog: (callback) => {
-      const handler = (_event: IpcRendererEvent, data: unknown) =>
-        callback(data as Parameters<typeof callback>[0])
-      ipcRenderer.on('comfy-boot-log', handler)
-      return () => ipcRenderer.removeListener('comfy-boot-log', handler)
     },
     onInstanceLaunching: (callback) => {
       const handler = (_event: IpcRendererEvent, data: unknown) =>
@@ -463,53 +449,6 @@ export function buildElectronApi(): ElectronApi {
         callback(data as Parameters<typeof callback>[0])
       ipcRenderer.on('model-downloads-cleared-finished', handler)
       return () => ipcRenderer.removeListener('model-downloads-cleared-finished', handler)
-    },
-    onTelemetrySettingChanged: (callback) => {
-      const handler = (_event: IpcRendererEvent, enabled: unknown) =>
-        callback(enabled as Parameters<typeof callback>[0])
-      ipcRenderer.on('telemetry-setting-changed', handler)
-      return () => ipcRenderer.removeListener('telemetry-setting-changed', handler)
-    },
-    captureTelemetry: (event, properties) => {
-      try {
-        ipcRenderer.send('telemetry:capture', { event, properties })
-      } catch {
-        // ignore: telemetry must never break the renderer
-      }
-    },
-    captureExceptionTelemetry: (payload) => {
-      try {
-        ipcRenderer.send('telemetry:captureException', payload)
-      } catch {
-        // ignore
-      }
-    },
-    registerTelemetryProperties: (properties) => {
-      try {
-        ipcRenderer.send('telemetry:registerProperties', properties)
-      } catch {
-        // ignore
-      }
-    },
-    telemetryGetExperimentFlag: (key) => ipcRenderer.invoke('telemetry:getExperimentFlag', key),
-    telemetryRecordExposure: (payload) => {
-      try {
-        ipcRenderer.send('telemetry:recordExposure', payload)
-      } catch {
-        // ignore
-      }
-    },
-    onDatadogError: (callback) => {
-      const handler = (_event: IpcRendererEvent, data: unknown) =>
-        callback(data as Parameters<typeof callback>[0])
-      ipcRenderer.on('dd-error', handler)
-      return () => ipcRenderer.removeListener('dd-error', handler)
-    },
-    onTelemetryActionFromMain: (callback) => {
-      const handler = (_event: IpcRendererEvent, data: unknown) =>
-        callback(data as Parameters<typeof callback>[0])
-      ipcRenderer.on('telemetry-action-from-main', handler)
-      return () => ipcRenderer.removeListener('telemetry-action-from-main', handler)
     },
     onErrorDetail: (callback) => {
       const handler = (_event: IpcRendererEvent, data: unknown) =>

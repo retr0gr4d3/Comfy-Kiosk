@@ -11,7 +11,6 @@ import {
   _broadcastToRenderer
 } from './shared'
 import { updateTitleBarOverlay } from '../titleBarOverlay'
-import * as mainTelemetry from '../telemetry'
 import { detectFirstUseState } from '../firstUseDetection'
 import * as updater from '../updater'
 import { globalSettingsEvents } from '../globalSettingsEvents'
@@ -122,17 +121,8 @@ export function buildSettingsSections(
       ]
     },
     {
-      title: i18n.t('settings.telemetry'),
+      title: i18n.t('settings.beta'),
       fields: [
-        {
-          id: 'telemetryEnabled',
-          label: i18n.t('settings.telemetryEnabled'),
-          type: 'boolean',
-          value: s.telemetryEnabled !== false
-        },
-        // Read through the resolver, never off `s`: absence means "not yet
-        // seeded", which the resolver settles (once) from the telemetry
-        // choice. Reading the raw value would coerce that to a default here.
         {
           id: 'betaFeaturesEnabled',
           label: i18n.t('settings.betaFeaturesEnabled'),
@@ -277,17 +267,9 @@ export function buildMediaSections(): SettingsSection[] {
   ]
 }
 
-// Write a setting and run its side-effect branches (theme/locale/telemetry
+// Write a setting and run its side-effect branches (theme/locale
 // broadcasts, updater hint, settings-changed) plus the Global Settings refresh.
 export function applySettingSet(key: string, value: unknown): void {
-  if (
-    key === 'betaFeaturesEnabled' &&
-    value === true &&
-    settings.get('betaFeaturesEnabled') !== true &&
-    settings.get('telemetryEnabled') !== true
-  ) {
-    return
-  }
   settings.set(key, value)
   if (key === 'theme') {
     _broadcastToRenderer('theme-changed', resolveTheme())
@@ -302,23 +284,9 @@ export function applySettingSet(key: string, value: unknown): void {
     })
     if (_onLocaleChanged) _onLocaleChanged()
   }
-  if (key === 'telemetryEnabled') {
-    _broadcastToRenderer('telemetry-setting-changed', value)
-    // Three-state: true => granted, false => denied, null/undefined => undecided
-    // (so an un-prompted migrator isn't collapsed into "opted in").
-    const state: mainTelemetry.ConsentState =
-      value === true ? 'granted' : value === false ? 'denied' : 'undecided'
-    mainTelemetry.setConsentState(state)
-  }
   if (key === 'autoInstallUpdates' || key === 'autoUpdate') {
     // Re-broadcast so a pending 'ready' immediately reads as auto-on/off.
     updater.notifyAutoUpdateChanged()
-  }
-  // Keep the durable per-setting person properties current on toggle (issues
-  // #1220/#1223) instead of waiting for the next boot. No-op for 'omit' keys.
-  const trackedProps = settings.getTrackedSettingsTelemetryProperties([key])
-  if (Object.keys(trackedProps).length > 0) {
-    mainTelemetry.registerPersonProperties(trackedProps)
   }
   _broadcastToRenderer('settings-changed', { key })
   globalSettingsEvents.emit('changed')

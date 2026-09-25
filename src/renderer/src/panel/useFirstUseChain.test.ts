@@ -5,14 +5,7 @@ import { defineComponent, h, nextTick, ref, type Ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import type { ActionResult, FieldOption, ShowProgressOpts, Source } from '../types/ipc'
 import { useProgressStore } from '../stores/progressStore'
-import { emitTelemetryAction } from '../lib/telemetry'
 import { useFirstUseChain, type FirstUseChainApi } from './useFirstUseChain'
-
-// The stubbed `window` lacks dispatchEvent, so mock the telemetry emit out.
-vi.mock('../lib/telemetry', () => ({
-  emitTelemetryAction: vi.fn(),
-  toVariantBucket: (id?: string) => (id ? id.replace(/^(win|mac|linux)-/, '') : 'unknown')
-}))
 
 const standaloneSource: Source = {
   id: 'standalone',
@@ -177,23 +170,6 @@ describe('useFirstUseChain — Express Install', () => {
     expect(chain.switchPanel).not.toHaveBeenCalled()
   })
 
-  it('emits install.dispatched (express) when the express install is dispatched (#1224)', async () => {
-    const chain = mountChain()
-    await chain.api!.handleFirstUseChainLocal({ express: true })
-
-    expect(vi.mocked(emitTelemetryAction)).toHaveBeenCalledWith(
-      'comfy.desktop.install.dispatched',
-      expect.objectContaining({
-        installation_id: 'inst-express-1',
-        source_id: 'standalone',
-        variant: 'nvidia-cuda',
-        express: true,
-        entrypoint: 'first_use',
-        template_selected: false
-      })
-    )
-  })
-
   it('picks the `recommended` option for each non-text field', async () => {
     const chain = mountChain()
     await chain.api!.handleFirstUseChainLocal({ express: true })
@@ -214,7 +190,7 @@ describe('useFirstUseChain — Express Install', () => {
 
     expect(testApi.buildInstallation).not.toHaveBeenCalled()
     expect(chain.handleShowProgress).not.toHaveBeenCalled()
-    expect(chain.switchPanel).toHaveBeenCalledWith('new-install', 'first_use')
+    expect(chain.switchPanel).toHaveBeenCalledWith('new-install')
   })
 
   it('falls back to Configure when addInstallation rejects', async () => {
@@ -225,14 +201,14 @@ describe('useFirstUseChain — Express Install', () => {
     await chain.api!.handleFirstUseChainLocal({ express: true })
 
     expect(chain.handleShowProgress).not.toHaveBeenCalled()
-    expect(chain.switchPanel).toHaveBeenCalledWith('new-install', 'first_use')
+    expect(chain.switchPanel).toHaveBeenCalledWith('new-install')
   })
 
   it('opens Configure when `express` is omitted (legacy chain-local behaviour)', async () => {
     const chain = mountChain()
     await chain.api!.handleFirstUseChainLocal()
 
-    expect(chain.switchPanel).toHaveBeenCalledWith('new-install', 'first_use')
+    expect(chain.switchPanel).toHaveBeenCalledWith('new-install')
     expect(testApi.buildInstallation).not.toHaveBeenCalled()
     expect(chain.handleShowProgress).not.toHaveBeenCalled()
   })
@@ -241,7 +217,7 @@ describe('useFirstUseChain — Express Install', () => {
     const chain = mountChain()
     await chain.api!.handleFirstUseChainLocal({ express: false })
 
-    expect(chain.switchPanel).toHaveBeenCalledWith('new-install', 'first_use')
+    expect(chain.switchPanel).toHaveBeenCalledWith('new-install')
     expect(testApi.buildInstallation).not.toHaveBeenCalled()
   })
 })

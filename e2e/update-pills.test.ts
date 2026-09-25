@@ -25,7 +25,7 @@ let ctx: AppContext
 test.describe.configure({ mode: 'serial' })
 
 test.beforeAll(async () => {
-  ctx = await launchApp({ settings: { firstUseCompleted: true, telemetryEnabled: false } })
+  ctx = await launchApp({ settings: { firstUseCompleted: true } })
 })
 
 test.afterAll(async () => {

@@ -3,16 +3,9 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 
-const getOpsFlagResult = vi.fn()
-vi.mock('./telemetry', () => ({
-  getOpsFlagResult: (...args: unknown[]) => getOpsFlagResult(...args)
-}))
-
-// `coreBetaGrants` is the one flag that persists, so resolving a value here writes `ops-flags.json`
-// for real — into the developer's own config dir, granting them the beta grants on their next launch.
-// Pinning `configDir()` to a temp dir is how `opsFlag.test.ts` and `experiments.test.ts` contain
-// that. Set for every test, not just the fetch one: an empty dir would resolve the file relative
-// to cwd and drop it in the repo root.
+// Grants resolve from `ops-flags.json`, so pinning `configDir()` to a temp dir keeps these tests
+// from reading the developer's own file. Set for every test: an empty dir would resolve the file
+// relative to cwd.
 let testConfigDir = ''
 vi.mock('./paths', () => ({
   configDir: () => testConfigDir
@@ -36,7 +29,6 @@ import type { InstallationRecord } from '../installations'
 
 beforeEach(() => {
   _resetForTest()
-  getOpsFlagResult.mockReset()
   testConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), 'core-beta-'))
 })
 
@@ -104,7 +96,7 @@ describe('parseCoreBetaGrants', () => {
         }))
       }
     ],
-    ['a fetch miss', undefined, undefined]
+    ['a missing entry', undefined, undefined]
   ])('fails closed for %s', (_label, value, payload) => {
     expect(parseCoreBetaGrants(value, payload)).toEqual([])
   })
@@ -986,40 +978,33 @@ describe('commitGrantShas', () => {
   })
 })
 
-describe('core beta grants fetch', () => {
-  it('reads its own PostHog key once at boot', async () => {
-    getOpsFlagResult.mockResolvedValue({
-      kind: 'value',
-      value: true,
-      payload: { flags: [{ arg: '--enable-assets', min_core_version: '0.3.80' }] }
-    })
-    await Promise.all([
-      initCoreBetaGrants({ distinctId: 'device-id' }),
-      initCoreBetaGrants({ distinctId: 'device-id' })
-    ])
+function writeGrantFile(payload: unknown): void {
+  fs.writeFileSync(
+    path.join(testConfigDir, 'ops-flags.json'),
+    JSON.stringify({ [CORE_BETA_FEATURES_FLAG_KEY]: { value: true, payload } })
+  )
+}
 
-    expect(getOpsFlagResult).toHaveBeenCalledOnce()
-    // The trailing callback is what lets a revocation arriving after the boot deadline reach
-    // disk for the next launch. This flag persists grants, so it is the one that must have one.
-    expect(getOpsFlagResult).toHaveBeenCalledWith(
-      CORE_BETA_FEATURES_FLAG_KEY,
-      'device-id',
-      expect.any(Number),
-      expect.any(Function)
-    )
+describe('core beta grants read', () => {
+  it('reads its own key from ops-flags.json once at boot', async () => {
+    writeGrantFile({ flags: [{ arg: '--enable-assets', min_core_version: '0.3.80' }] })
+    await Promise.all([initCoreBetaGrants(), initCoreBetaGrants()])
+
     await expect(getCoreBetaGrantsAsync()).resolves.toEqual([
       { arg: '--enable-assets', minCoreVersion: '0.3.80' }
     ])
   })
+
+  it('grants nothing when ops-flags.json has no entry', async () => {
+    await initCoreBetaGrants()
+    await expect(getCoreBetaGrantsAsync()).resolves.toEqual([])
+  })
+
   it('logs the cached commit ranges in full, on one line', async () => {
     const log = vi.spyOn(console, 'log').mockImplementation(() => {})
-    getOpsFlagResult.mockResolvedValue({
-      kind: 'value',
-      value: true,
-      payload: { flags: [{ arg: '--enable-assets', commit_ranges: [[SHA_A, null]] }] }
-    })
+    writeGrantFile({ flags: [{ arg: '--enable-assets', commit_ranges: [[SHA_A, null]] }] })
 
-    await initCoreBetaGrants({ distinctId: 'device-id' })
+    await initCoreBetaGrants()
 
     const init = log.mock.calls.find((call) => String(call[0]).startsWith('[core-beta] init:'))
     const rendered = init!.map(String).join(' ')

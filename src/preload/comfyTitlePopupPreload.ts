@@ -96,7 +96,7 @@ export interface PopupGlobalSettingsSnapshot {
   initialTab: 'general' | 'updates' | 'storage' | 'advanced' | 'logs' | null
   languageFields: Record<string, unknown>[]
   generalFields: Record<string, unknown>[]
-  telemetryFields: Record<string, unknown>[]
+  betaFields: Record<string, unknown>[]
   desktopUpdateFields: Record<string, unknown>[]
   cacheFields: Record<string, unknown>[]
   advancedFields: Record<string, unknown>[]
@@ -104,8 +104,6 @@ export interface PopupGlobalSettingsSnapshot {
   installLocationFields: Record<string, unknown>[]
   modelsDirs: PopupGlobalSettingsModelsDir[]
   modelsSystemDefault: string
-  /** Mirrors `GlobalSettingsSnapshot.telemetryGranted`. */
-  telemetryGranted: boolean
   appUpdate: {
     state: Record<string, unknown>
     progress: Record<string, unknown> | null
@@ -441,7 +439,7 @@ function isGlobalSettingsSnapshot(value: unknown): value is PopupGlobalSettingsS
   }
   if (!Array.isArray(v['languageFields'])) return false
   if (!Array.isArray(v['generalFields'])) return false
-  if (!Array.isArray(v['telemetryFields'])) return false
+  if (!Array.isArray(v['betaFields'])) return false
   if (!Array.isArray(v['desktopUpdateFields'])) return false
   if (!Array.isArray(v['cacheFields'])) return false
   if (!Array.isArray(v['advancedFields'])) return false
@@ -449,7 +447,6 @@ function isGlobalSettingsSnapshot(value: unknown): value is PopupGlobalSettingsS
   if (!Array.isArray(v['installLocationFields'])) return false
   if (!Array.isArray(v['modelsDirs'])) return false
   if (typeof v['modelsSystemDefault'] !== 'string') return false
-  if (typeof v['telemetryGranted'] !== 'boolean') return false
   if (!v['appUpdate'] || typeof v['appUpdate'] !== 'object') return false
   return true
 }

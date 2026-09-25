@@ -69,7 +69,7 @@ test.beforeAll(async () => {
   await writeFile(path.join(deletePath, MARKER_FILENAME), DELETE_ID)
 
   ctx = await launchApp({
-    settings: { firstUseCompleted: true, telemetryEnabled: false },
+    settings: { firstUseCompleted: true },
     installations: [
       {
         id: UNTRACK_ID,

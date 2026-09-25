@@ -3,8 +3,7 @@
  *
  * Every gate the notice depends on is exercised for real here rather than stubbed:
  *
- *   - the grant arrives the way a returning user's does, from `ops-flags.json` (PostHog is
- *     unreachable under the harness, so `coreBetaGrants` falls back to the persisted value);
+ *   - the grant arrives the way a returning user's does, from the local `ops-flags.json`;
  *   - it clears the version window against the seeded `comfyVersion`;
  *   - it clears the running core's args schema, parsed from a real `main.py --help` spawn;
  *   - the launch spawns, the stub serves, the boot wait succeeds and the window attaches;
@@ -51,7 +50,6 @@ const GRANT_ARG = '--enable-assets'
 /** Comfortably below the seeded `baseTag`, so the version window opens. */
 const GRANT_MIN_CORE = '0.3.80'
 
-
 let ctx: AppContext
 let installPath: string
 
@@ -74,17 +72,7 @@ async function captureWindow(app: ElectronApplication, name: string): Promise<st
   return captureHostWindow(app, ctx.panel, file)
 }
 
-/** PostHog's own value for the flag wins over the persisted one, and a live fetch would make
- *  this run depend on a real project's flag state. Pointing the SDK at a closed port makes the
- *  fetch `unreachable`, which is the documented path where `ops-flags.json` is authoritative —
- *  the same path an offline launch takes for a user who already has the grant. */
-const UNREACHABLE_POSTHOG_HOST = 'http://127.0.0.1:1'
-let previousPosthogHost: string | undefined
-
 test.beforeAll(async () => {
-  previousPosthogHost = process.env['POSTHOG_HOST']
-  process.env['POSTHOG_HOST'] = UNREACHABLE_POSTHOG_HOST
-
   installPath = await mkdtemp(path.join(os.tmpdir(), 'comfyui-beta-notice-'))
   port = await reserveFreePort()
   await writeFakeComfyInstall({ installPath, port })
@@ -92,8 +80,7 @@ test.beforeAll(async () => {
   ctx = await launchApp({
     settings: {
       firstUseCompleted: true,
-      // Beta grants are gated on the opt-in, which is itself gated on consent.
-      telemetryEnabled: true,
+      // Beta grants are gated on the opt-in.
       betaFeaturesEnabled: true,
       // Spend the onboarding pill hint up front. Both cards share one popup per window, and
       // the hint wins when they collide — which is correct behaviour, and covered by a unit
@@ -134,8 +121,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await ctx?.cleanup()
   if (installPath) await rm(installPath, { recursive: true, force: true })
-  if (previousPosthogHost === undefined) delete process.env['POSTHOG_HOST']
-  else process.env['POSTHOG_HOST'] = previousPosthogHost
 })
 
 test('a first beta activation raises a nonblocking notice over live ComfyUI @linux', async () => {
@@ -362,7 +347,7 @@ test('the settings link lands on the beta opt-in row and retires the card @linux
     () => settings.exists('[data-field-id="betaFeaturesEnabled"].gs-field-flash'),
     { timeout: 10_000, message: 'beta opt-in row was never highlighted' },
   )
-  // The switch it points at is the real opt-out, and it is live (on, and not consent-blocked).
+  // The switch it points at is the real opt-out, and it is live (on, and not blocked).
   const state = await settings.evaluate<{ checked: string | null; disabled: string | null }>(`(() => {
     const el = document.querySelector('[data-field-id="betaFeaturesEnabled"] button[role="switch"]')
     if (!el) return { checked: null, disabled: null }

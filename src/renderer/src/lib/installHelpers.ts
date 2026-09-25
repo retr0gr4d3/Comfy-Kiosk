@@ -1,6 +1,5 @@
 import { ref, onUnmounted } from 'vue'
 import type { DiskSpaceInfo, FieldOption, PathIssue } from '../types/ipc'
-import { emitTelemetryAction } from './telemetry'
 import { formatBytes } from './formatting'
 
 const pathIssueI18nKeys: Record<PathIssue, { title: string; message: string }> = {
@@ -22,44 +21,18 @@ const pathIssueI18nKeys: Record<PathIssue, { title: string; message: string }> =
   }
 }
 
-export function toPathGuardrail(issue: PathIssue): string {
-  switch (issue) {
-    case 'insideAppBundle':
-      return 'path_inside_bundle'
-    case 'oneDrive':
-      return 'onedrive'
-    case 'insideSharedDir':
-      return 'inside_shared_dir'
-    case 'insideExistingInstall':
-      return 'inside_existing_install'
-    default:
-      return 'path_issue'
-  }
-}
-
-export function trackGuardrailBlocked(guardrailType: string, flow: string, stage: string): void {
-  emitTelemetryAction('comfy.desktop.install.guardrail.blocked', {
-    guardrail_type: guardrailType,
-    flow,
-    stage
-  })
-}
-
 /**
  * Show blocking alerts for each path issue. Returns `true` if the path is valid
  * (no issues), or `false` if a blocking issue was shown.
  */
 export async function showPathIssueAlerts(
   issues: PathIssue[],
-  flow: string,
-  stage: string,
   alert: (opts: { title: string; message: string }) => Promise<void>,
   t: (key: string) => string
 ): Promise<boolean> {
   for (const issue of issues) {
     const keys = pathIssueI18nKeys[issue]
     if (keys) {
-      trackGuardrailBlocked(toPathGuardrail(issue), flow, stage)
       await alert({ title: t(keys.title), message: t(keys.message) })
       return false
     }
@@ -72,8 +45,6 @@ export async function showPathIssueAlerts(
  * Returns `true` if the caller should proceed, `false` if the user cancelled.
  */
 export async function checkNvidiaDriverOrWarn(
-  flow: string,
-  stage: string,
   confirm: (opts: {
     title: string
     message: string
@@ -93,24 +64,9 @@ export async function checkNvidiaDriverOrWarn(
       confirmLabel: t('newInstall.nvidiaDriverContinue'),
       confirmStyle: 'primary'
     })
-    if (!ok) {
-      trackGuardrailBlocked('nvidia_driver', flow, stage)
-      return false
-    }
+    if (!ok) return false
   }
   return true
-}
-
-export function trackDiskWarningResponse(
-  warningType: string,
-  accepted: boolean,
-  flow: string
-): void {
-  emitTelemetryAction('comfy.desktop.install.disk_warning.response', {
-    warning_type: warningType,
-    accepted,
-    flow
-  })
 }
 
 /**
@@ -120,7 +76,6 @@ export function trackDiskWarningResponse(
 export async function checkDiskSpaceOrWarn(opts: {
   path: string
   estimatedRequired: number
-  flow: string
   confirm: (opts: {
     title: string
     message: string
@@ -141,7 +96,6 @@ export async function checkDiskSpaceOrWarn(opts: {
       confirmLabel: opts.t('diskSpace.continueAnyway'),
       confirmStyle: 'primary'
     })
-    trackDiskWarningResponse('insufficient_estimated', !!ok, opts.flow)
     if (!ok) return false
   } else if (space.free < 1073741824) {
     const ok = await opts.confirm({
@@ -152,7 +106,6 @@ export async function checkDiskSpaceOrWarn(opts: {
       confirmLabel: opts.t('diskSpace.continueAnyway'),
       confirmStyle: 'primary'
     })
-    trackDiskWarningResponse('low_free_space', !!ok, opts.flow)
     if (!ok) return false
   }
 
@@ -221,7 +174,6 @@ export function isApiNodeTemplate(option: FieldOption | null | undefined): boole
 export async function checkTemplateDiskOrBlock(opts: {
   path: string
   estimatedModelBytes: number
-  flow: string
   alert: (opts: { title: string; message: string }) => Promise<void>
   t: (key: string, params?: Record<string, string>) => string
 }): Promise<boolean> {
@@ -236,7 +188,6 @@ export async function checkTemplateDiskOrBlock(opts: {
   }
   if (!isTemplateDiskBlocked(diskSpace, opts.estimatedModelBytes)) return true
 
-  trackGuardrailBlocked('template_models_disk', opts.flow, 'save')
   await opts.alert({
     title: opts.t('diskSpace.templateBlockTitle'),
     message: opts.t('diskSpace.templateBlockMessage', {

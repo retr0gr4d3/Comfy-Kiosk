@@ -5,8 +5,7 @@ import path from 'path'
 import {
   clearStartupAttemptMarker,
   readStartupAttemptMarker,
-  recordStartupAttempt,
-  recordStartupAttemptOutcome
+  recordStartupAttempt
 } from './startup-attempt-marker'
 
 /**
@@ -63,24 +62,6 @@ describe('startup attempt marker', () => {
     expect(read).toMatchObject({
       state: 'present',
       marker: { version: '1.0.35', attemptId: 'attempt-35' }
-    })
-  })
-
-  it('records an emitted outcome without removing the loop-breaker', () => {
-    expect(recordStartupAttempt('1.0.35', 'attempt-35')).toBe(true)
-    const read = readStartupAttemptMarker()
-    expect(read.state).toBe('present')
-    if (read.state !== 'present') return
-
-    recordStartupAttemptOutcome(read.marker, 'still_pending')
-
-    expect(readStartupAttemptMarker()).toMatchObject({
-      state: 'present',
-      marker: {
-        version: '1.0.35',
-        attemptId: 'attempt-35',
-        reportedOutcome: 'still_pending'
-      }
     })
   })
 

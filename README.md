@@ -184,7 +184,7 @@ Three workflows in [`.github/workflows/`](.github/workflows/):
 | --------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `version-bump.yml`          | manual (**Run workflow**)     | Opens the version-bump PR (bot-authored) and labels it `Release`.                                                                                     |
 | `release-from-pr-label.yml` | `pull_request_target: closed` | On merge of a `Release`-labeled PR, tags `vX.Y.Z` and dispatches the build.                                                                           |
-| `build-release.yml`         | push of a `v*` tag            | Runs `pnpm run build`, uploads Datadog sourcemaps, runs `todesktop build`, and publishes the GitHub Release (`stable` → Latest, `-rc` → pre-release). |
+| `build-release.yml`         | push of a `v*` tag            | Runs `pnpm run build`, runs `todesktop build`, and publishes the GitHub Release (`stable` → Latest, `-rc` → pre-release).                             |
 
 CLI equivalent of step 1:
 
@@ -195,7 +195,7 @@ gh workflow run version-bump.yml -f channel=stable -f bump=patch
 **GitHub Actions config:**
 
 - Variable `APP_ID` + secret `CLOUD_CODE_BOT_PRIVATE_KEY` — the `cloud-code-bot` GitHub App that opens the version-bump PR, so any maintainer can release without a personal token.
-- Secrets `TODESKTOP_ACCESS_TOKEN`, `TODESKTOP_EMAIL` (ToDesktop CLI) and `DATADOG_API_KEY` (RUM sourcemaps).
+- Secrets `TODESKTOP_ACCESS_TOKEN` and `TODESKTOP_EMAIL` (ToDesktop CLI).
 
 </details>
 

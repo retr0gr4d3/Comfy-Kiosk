@@ -3,9 +3,8 @@
  *
  * When ComfyUI exits with a non-zero code we capture the last chunk of
  * raw stderr alongside the exit code (the same payload main already
- * broadcasts via `comfy-exited`). PII scrubbing happens on the telemetry
- * path; this buffer feeds the user-visible crashed-state lifecycle view
- * and must stay readable. The renderer's lifecycle view picks up
+ * broadcasts via `comfy-exited`). This buffer feeds the user-visible
+ * crashed-state lifecycle view and must stay readable. The renderer's lifecycle view picks up
  * the live event for a crash that happens while the panel is mounted, but
  * a crashed instance whose Comfy Instance window is then refreshed (or
  * whose panel view is recreated by main) needs to re-fetch the same

@@ -1,6 +1,5 @@
 import { BrowserWindow, WebContentsView, ipcMain, shell } from 'electron'
 import path from 'path'
-import type { DatadogForwardedError } from '../../types/ipc'
 import type { InstallationRecord } from '../installations'
 import { getAppVersion } from '../lib/ipc'
 import { attachContextMenu } from '../lib/contextMenu'
@@ -9,11 +8,7 @@ import {
   detachWindowDownloads,
   getDownloadsTrayState
 } from '../lib/comfyDownloadManager'
-import {
-  handleFirebasePopup,
-  isFirebaseAuthHandlerUrl,
-  type SignInFailureContext
-} from '../auth/firebaseBridge'
+import { handleFirebasePopup, isFirebaseAuthHandlerUrl } from '../auth/firebaseBridge'
 import {
   isCheckoutReturnUrl,
   isCheckoutUrl,
@@ -31,10 +26,6 @@ import {
   _unregisterExtraBroadcastTarget,
   resolveTheme
 } from '../lib/ipc/shared'
-import * as mainTelemetry from '../lib/telemetry'
-import { getUserTier } from '../lib/userTier'
-import { trackFirebaseAuthReporter } from '../lib/firebaseAuthIdentity'
-import { forwardDatadogError } from '../lib/processErrorHandlers'
 import { recordDashboardSurface, recordInstanceSurface } from '../lib/lastSession'
 import * as settings from '../settings'
 import * as updater from '../lib/updater'
@@ -79,21 +70,6 @@ export type CloseConsultResult = 'cleared' | 'aborted' | 'defer'
  *  Returning to the dashboard is no longer a close-time choice: it's a
  *  deliberate user action via the title pill's "Open Dashboard" / New Window. */
 export type CloseWindowChoice = 'close' | 'cancel'
-
-export function buildFirebaseAuthForwardedError(
-  failure: SignInFailureContext
-): DatadogForwardedError {
-  const source =
-    failure.flow === 'desktop_login_code'
-      ? 'firebase-desktop-login-code-failed'
-      : 'firebase-loopback-bridge-failed'
-  return {
-    source,
-    message: 'Firebase sign-in failed',
-    level: 'warn',
-    context: { origin: 'main-process', ...failure }
-  }
-}
 
 /** Should the close handler bail after the renderer consult?
  *
@@ -269,8 +245,7 @@ const CHECKOUT_RELOAD_TIMEOUT_MS = 4000
 function wireCheckoutPopup(
   childWindow: BrowserWindow,
   parent: BrowserWindow,
-  hostContents: Electron.WebContents,
-  openedAt: number
+  hostContents: Electron.WebContents
 ): void {
   const close = (): void => {
     if (!childWindow.isDestroyed()) childWindow.close()
@@ -292,15 +267,6 @@ function wireCheckoutPopup(
   const closeOnReturn = (_e: Electron.Event, targetUrl: string): void => {
     if (returning || childWindow.isDestroyed() || !isCheckoutReturnUrl(targetUrl)) return
     returning = true
-    // Fires when the checkout flow ENDS, including cancel — the return URL is
-    // the same first-party comfy.org page whether the user paid or backed out.
-    // `duration_ms` is measured from popup open. Purchase truth is server-side
-    // (billing:topup_completed / billing:subscription_created); do not read a
-    // conversion off this event.
-    mainTelemetry.capture('comfy.desktop.billing.checkout_returned', {
-      duration_ms: Date.now() - openedAt,
-      user_tier: getUserTier()
-    })
     if (hostContents.isDestroyed()) {
       close()
       return
@@ -601,8 +567,7 @@ export function createHostWindow(opts: CreateHostWindowOpts): CreateHostWindowRe
       // separate chunk under out/preload/chunks/. Sandboxed preloads can
       // only require() from electron/events/timers/url, so the chunk
       // require would fail silently and leave window.api undefined,
-      // which historically blanked the title-bar renderer and broke
-      // renderer-side telemetry. contextIsolation + nodeIntegration:false
+      // which historically blanked the title-bar renderer. contextIsolation + nodeIntegration:false
       // remain on, so renderer JS still has no Node access.
       // Tracked: issue #521 (build-time chunk inlining to re-enable sandbox).
       sandbox: false,
@@ -615,14 +580,6 @@ export function createHostWindow(opts: CreateHostWindowOpts): CreateHostWindowRe
   // Native right-click Copy/Paste for selectable text + inputs in the title bar.
   attachContextMenu(comfyWindow, titleBarView.webContents)
   _registerExtraBroadcastTarget(titleBarView.webContents)
-  // Title bar is the always-alive renderer per host window — register it as
-  // the canonical telemetry relay target so main-emitted events reach
-  // Datadog RUM regardless of whether the panelView is currently mounted
-  // (steady-state `comfy` mode tears the panel down). Exactly one relay
-  // target per host window prevents Datadog double-counting; PostHog is
-  // already captured by the Node SDK in main and suppressed in the relay
-  // payload (`mainAlreadyCaptured: true`).
-  mainTelemetry.registerTelemetryRelayTarget(titleBarView.webContents)
 
   // Body view. Install-less leaves it dummy and zero-sized; install-backed
   // loads the URL via attachInstall.
@@ -916,22 +873,13 @@ export function createHostWindow(opts: CreateHostWindowOpts): CreateHostWindowRe
         // chooser's reused comfyView's `.webContents` can come back
         // undefined after the install's navigation churn — left the
         // host window alive forever, with ComfyUI still loaded.
-        // Errors are forwarded to Datadog so silent teardown failures
-        // stay visible in telemetry instead of being swallowed by the
-        // safety net.
+        // Errors are logged so silent teardown failures stay visible
+        // instead of being swallowed by the safety net.
         const safeTeardown = (source: string, fn: () => void): void => {
           try {
             fn()
           } catch (err) {
-            const message = err instanceof Error ? err.message : String(err)
-            const stack = err instanceof Error ? err.stack : undefined
-            forwardDatadogError({
-              source,
-              message,
-              stack,
-              level: 'error',
-              context: { origin: 'main-process', windowKey: String(windowKey) }
-            })
+            console.error(`[${source}] teardown step failed (window ${String(windowKey)}):`, err)
           }
         }
         safeTeardown('host-window-close-install-cleanup', () => {
@@ -940,9 +888,6 @@ export function createHostWindow(opts: CreateHostWindowOpts): CreateHostWindowRe
         safeTeardown('host-window-close-detach-downloads', () => detachWindowDownloads(comfyWindow))
         safeTeardown('host-window-close-unregister-broadcast-target', () =>
           _unregisterExtraBroadcastTarget(titleBarView.webContents)
-        )
-        safeTeardown('host-window-close-unregister-telemetry-relay', () =>
-          mainTelemetry.unregisterTelemetryRelayTarget(titleBarView.webContents)
         )
         // Re-read the entry from the live registry: rebuildComfyViewIfNeeded
         // can have swapped `entry.comfyView` since the closure was captured
@@ -960,7 +905,7 @@ export function createHostWindow(opts: CreateHostWindowOpts): CreateHostWindowRe
         safeTeardown('host-window-close-comfy-webcontents-close', () => {
           // `webContents` can come back undefined on a reused chooser
           // comfyView after the install's navigation churn — the optional
-          // chain avoids a TypeError that would needlessly spam Datadog
+          // chain avoids a TypeError that would needlessly spam the log
           // during otherwise expected teardowns.
           if (activeComfyView.webContents && !activeComfyView.webContents.isDestroyed()) {
             activeComfyView.webContents.close()
@@ -1097,7 +1042,6 @@ export function buildComfyView(
   comfyView.setBackgroundColor(COMFY_BG)
 
   const comfyContents = comfyView.webContents
-  trackFirebaseAuthReporter(comfyContents)
   // Eagerly attach the will-download handler to the comfy view's
   // session so any `session.downloadURL(...)` call below — or a server-
   // initiated `Content-Disposition: attachment` response — flows
@@ -1107,21 +1051,16 @@ export function buildComfyView(
 
   // Set by the window-open handler immediately before the matching
   // `did-create-window` fires (synchronous pairing), then reset there so
-  // it can never leak to a later non-checkout popup. `nextCheckoutOpenedAt`
-  // carries the popup-open timestamp through to `wireCheckoutPopup` so the
-  // return event can report how long the checkout flow took.
+  // it can never leak to a later non-checkout popup.
   let nextPopupIsCheckout = false
-  let nextCheckoutOpenedAt = 0
 
   comfyContents.on('did-create-window', (childWindow) => {
     const isCheckout = nextPopupIsCheckout
-    const openedAt = nextCheckoutOpenedAt
     nextPopupIsCheckout = false
-    nextCheckoutOpenedAt = 0
     childWindow.setIcon(APP_ICON)
     if (process.platform !== 'darwin') childWindow.removeMenu()
     injectMacPasskeyWarning(childWindow)
-    if (isCheckout) wireCheckoutPopup(childWindow, comfyWindow, comfyContents, openedAt)
+    if (isCheckout) wireCheckoutPopup(childWindow, comfyWindow, comfyContents)
   })
   comfyContents.setWindowOpenHandler(({ url: childUrl }) => {
     // Intercept Firebase auth popups (`<authDomain>/__/auth/handler?...`)
@@ -1132,7 +1071,7 @@ export function buildComfyView(
       void handleFirebasePopup(childUrl, comfyContents, {
         parentWindow: comfyWindow,
         onError: (failure) => {
-          forwardDatadogError(buildFirebaseAuthForwardedError(failure))
+          console.warn('Firebase sign-in failed:', failure)
         }
       })
       return { action: 'deny' }
@@ -1147,10 +1086,6 @@ export function buildComfyView(
       // front. Card/WeChat keep working there too. Credits are granted
       // server-side by the Stripe webhook and the renderer refetches balance on
       // return, so nothing needs to redirect back into the app.
-      mainTelemetry.capture('comfy.desktop.billing.checkout_opened', {
-        source: 'system_browser',
-        user_tier: getUserTier()
-      })
       void shell.openExternal(childUrl)
       return { action: 'deny' }
     }

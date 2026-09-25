@@ -1,12 +1,9 @@
 import { app } from 'electron'
-import * as mainTelemetry from './telemetry'
-import type { DatadogForwardedError } from '../../types/ipc'
-import { scrubAll } from '../../shared/piiScrub'
 import { writeAppLogSync, flushOperationOutput } from './appLog'
 
 /**
- * Main-process error funnel: scrub, fan out to renderer for Datadog RUM,
- * and capture in PostHog Node so nothing is lost when no panel is open.
+ * Main-process error funnel: record uncaught errors and crashed child /
+ * renderer processes in the local app log. Nothing leaves the machine.
  */
 
 let processErrorHandlersRegistered = false
@@ -31,31 +28,6 @@ function serializeUnknownError(error: unknown): { message: string; stack?: strin
   }
 }
 
-export function forwardDatadogError(payload: DatadogForwardedError): void {
-  const scrubbed: DatadogForwardedError = {
-    ...payload,
-    message: scrubAll(payload.message),
-    stack: payload.stack ? scrubAll(payload.stack) : undefined,
-    // Mark as already captured by main-process PostHog so the renderer routes it to Datadog
-    // only and we don't double-count in PostHog.
-    skipPostHog: true
-  }
-  // Capture via PostHog Node and mirror to Datadog only when the capture
-  // actually ships (quarantined captures defer or drop the mirror with the
-  // write). forwardExceptionToRenderer allow-lists context keys, so
-  // reason/exitCode/type survive for child/renderer crashes.
-  try {
-    const err = new Error(scrubbed.message)
-    if (scrubbed.stack) err.stack = scrubbed.stack
-    mainTelemetry.captureExceptionAndForward(err, {
-      ...(scrubbed.context || {}),
-      origin: 'main-process',
-      source: scrubbed.source,
-      level: scrubbed.level ?? null
-    })
-  } catch {}
-}
-
 export function registerProcessErrorHandlers(): void {
   if (processErrorHandlersRegistered) return
   processErrorHandlersRegistered = true
@@ -72,13 +44,6 @@ export function registerProcessErrorHandlers(): void {
     // (install/update/migrate output that hasn't hit a newline) so the last
     // lines before the crash are durable. No-rotate to match the crash path.
     flushOperationOutput(undefined, { rotate: false })
-    forwardDatadogError({
-      source: 'main-uncaught-exception',
-      message: serialized.message,
-      stack: serialized.stack,
-      level: 'critical',
-      context: { origin: 'main-process' }
-    })
   })
 
   process.on('unhandledRejection', (reason) => {
@@ -87,13 +52,6 @@ export function registerProcessErrorHandlers(): void {
       'ERROR',
       `unhandledRejection: ${serialized.message}${serialized.stack ? `\n${serialized.stack}` : ''}`
     )
-    forwardDatadogError({
-      source: 'main-unhandled-rejection',
-      message: serialized.message,
-      stack: serialized.stack,
-      level: 'error',
-      context: { origin: 'main-process' }
-    })
   })
 
   app.on('child-process-gone', (_event, details) => {
@@ -107,19 +65,6 @@ export function registerProcessErrorHandlers(): void {
         `${extra['name'] ? ` name=${String(extra['name'])}` : ''}` +
         `${extra['serviceName'] ? ` service=${String(extra['serviceName'])}` : ''}`
     )
-    forwardDatadogError({
-      source: 'main-child-process-gone',
-      message: `Child process ${details.type} exited: ${details.reason}`,
-      level: 'error',
-      context: {
-        origin: 'main-process',
-        type: details.type,
-        reason: details.reason,
-        exitCode: details.exitCode,
-        name: extra['name'],
-        serviceName: extra['serviceName']
-      }
-    })
   })
 
   app.on('render-process-gone', (_event, _webContents, details) => {
@@ -131,15 +76,5 @@ export function registerProcessErrorHandlers(): void {
       'CRITICAL',
       `render-process-gone reason=${details.reason} exitCode=${details.exitCode}`
     )
-    forwardDatadogError({
-      source: 'main-render-process-gone',
-      message: `Renderer process gone: ${details.reason} (exit ${details.exitCode})`,
-      level: 'critical',
-      context: {
-        origin: 'main-process',
-        reason: details.reason,
-        exitCode: details.exitCode
-      }
-    })
   })
 }

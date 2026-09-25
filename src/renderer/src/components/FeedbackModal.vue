@@ -2,7 +2,6 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseModal from './ui/BaseModal.vue'
-import { emitTelemetryAction } from '../lib/telemetry'
 
 // Send Feedback modal wrapping the typeform in an iframe. The iframe origin
 // must stay whitelisted in panel.html's `frame-src` CSP directive. On submit
@@ -60,7 +59,6 @@ function handleTypeformMessage(event: MessageEvent): void {
   // SDK versions but always include `submit`.
   if (typeof type !== 'string' || !type.toLowerCase().includes('submit')) return
   submitted.value = true
-  emitTelemetryAction('comfy.desktop.feedback.submitted', {})
   autocloseTimer = setTimeout(() => {
     autocloseTimer = null
     emit('close')

@@ -9,7 +9,7 @@ export interface ChooserHandoffOpts {
    *  routing in `usePanelOverlays`. */
   showProgress: (opts: ShowProgressOpts) => Promise<void>
   /** Surfaces the new-install flow as a takeover above the chooser body. */
-  switchPanel: (panel: PanelKey, entrypoint?: string) => Promise<void>
+  switchPanel: (panel: PanelKey) => Promise<void>
 }
 
 /** Outcome of `performChooserLaunch()`. `'launched'` auto-swaps a takeover
@@ -45,12 +45,12 @@ export interface ChooserHandoffApi {
 }
 
 /** Owns the install-less chooser host's launch hand-off, reusing
- *  `useListAction` so it shares the Dashboard's confirm / port-conflict /
- *  telemetry behaviour. `prepareChooserHostHandoff` is exposed separately
+ *  `useListAction` so it shares the Dashboard's confirm / port-conflict
+ *  behaviour. `prepareChooserHostHandoff` is exposed separately
  *  for surfaces that route launches straight through `show-progress`. */
 export function useChooserHandoff(opts: ChooserHandoffOpts): ChooserHandoffApi {
   const sessionStore = useSessionStore()
-  const { executeAction: executeChooserAction } = useListAction('chooser', {
+  const { executeAction: executeChooserAction } = useListAction({
     showProgress: opts.showProgress
   })
 
@@ -124,7 +124,7 @@ export function useChooserHandoff(opts: ChooserHandoffOpts): ChooserHandoffApi {
     await performChooserLaunch(
       installation,
       () => {
-        void opts.switchPanel('new-install', 'chooser_pick')
+        void opts.switchPanel('new-install')
       },
       { isRestart: launchOpts?.isRestart === true }
     )
@@ -153,7 +153,7 @@ export function useChooserHandoff(opts: ChooserHandoffOpts): ChooserHandoffApi {
   function handleChooserShowNewInstall(): void {
     // Empty-state CTA opens new-install as a takeover above the chooser
     // body, so dismissing it returns the user to the chooser.
-    void opts.switchPanel('new-install', 'chooser')
+    void opts.switchPanel('new-install')
   }
 
   onUnmounted(() => {

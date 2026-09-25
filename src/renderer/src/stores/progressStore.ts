@@ -3,7 +3,6 @@ import { reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSessionStore } from './sessionStore'
 import { getPhaseWeights } from '../lib/progressWeights'
-import { emitTelemetryAction, toErrorBucket } from '../lib/telemetry'
 import type {
   ActionResult,
   ErrorDetailData,
@@ -59,16 +58,10 @@ export interface Operation {
   cancelRequested: boolean
   result: ActionResult | null
   /** Action id that kicked off this op (`copy-install`, `copy-update`,
-   *  `update`, `restore-snapshot`, …). Carried so the op-outcome event
-   *  can split the funnel by the exact path the user took — opKind
-   *  alone collapses copy-update / release-update / update into
-   *  `'update'` and copy-install into `'generic'`. */
+   *  `update`, `restore-snapshot`, …). opKind alone collapses
+   *  copy-update / release-update / update into `'update'` and
+   *  copy-install into `'generic'`. */
   actionId?: string
-  /** Wall-clock start, for the op-outcome event's duration_ms. */
-  _startedAtMs: number
-  /** One-shot guard so `comfy.desktop.op.result` fires exactly once per op
-   *  (a terminal transition AND a later cleanup must not double-count). */
-  _resultEmitted: boolean
   unsubProgress: Unsubscribe | null
   unsubOutput: Unsubscribe | null
   apiCall: (() => Promise<ActionResult>) | null
@@ -98,53 +91,9 @@ export const useProgressStore = defineStore('progress', () => {
     }
   })
 
-  /**
-   * Fire `comfy.desktop.op.result` exactly once per operation. This is the
-   * outcome half of the multi-instance funnel: `comfy.desktop.action.invoked`
-   * (with `action_id`) marks the click; this marks how it ended.
-   *
-   * `result`:
-   *   - `success`          — apiCall resolved ok
-   *   - `failed`           — sync throw, rejected promise, or ok:false
-   *                          (carries `error_bucket`)
-   *   - `cancelled_user`   — user clicked Cancel (apiCall resolved
-   *                          `cancelled` after `cancelOperation`)
-   *   - `cancelled_abrupt` — op torn down before any terminal state
-   *                          (window closed / replaced mid-flight)
-   *
-   * `portConflict` is deliberately NOT terminal — the op stays alive
-   * pending resolution, so we don't emit for it.
-   */
-  function emitOpResult(
-    op: Operation,
-    installationId: string,
-    result: 'success' | 'failed' | 'cancelled_user' | 'cancelled_abrupt'
-  ): void {
-    if (op._resultEmitted) return
-    op._resultEmitted = true
-    emitTelemetryAction('comfy.desktop.op.result', {
-      installation_id: installationId,
-      action_id: op.actionId ?? null,
-      op_kind: op.opKind,
-      // Panel/drawer/dashboard ops route through this store; picker-
-      // initiated ops emit their own op.result main-side tagged
-      // `source: 'picker'`. Lets the dashboard split the two surfaces.
-      source: 'panel',
-      result,
-      duration_ms: Date.now() - op._startedAtMs,
-      ...(result === 'failed' && op.error ? { error_bucket: toErrorBucket(op.error) } : {})
-    })
-  }
-
   function cleanupOperation(installationId: string): void {
     const op = operations.get(installationId)
     if (!op) return
-    // An op torn down before reaching a terminal state = the user left
-    // mid-way (window closed, or a new op replaced this one). Distinct
-    // from a deliberate Cancel click, which resolves `cancelled` below.
-    if (!op.finished && !op._resultEmitted) {
-      emitOpResult(op, installationId, 'cancelled_abrupt')
-    }
     if (op.unsubProgress) op.unsubProgress()
     if (op.unsubOutput) op.unsubOutput()
     op.unsubProgress = null
@@ -227,8 +176,6 @@ export const useProgressStore = defineStore('progress', () => {
       cancelRequested: false,
       result: null,
       actionId,
-      _startedAtMs: Date.now(),
-      _resultEmitted: false,
       unsubProgress: null,
       unsubOutput: null,
       apiCall,
@@ -317,7 +264,6 @@ export const useProgressStore = defineStore('progress', () => {
         installationName: rop.title,
         message: rop.error
       })
-      emitOpResult(rop, installationId, 'failed')
       return
     }
 
@@ -330,19 +276,14 @@ export const useProgressStore = defineStore('progress', () => {
 
       if (result.ok) {
         if (rop.steps) rop.done = true
-        emitOpResult(rop, installationId, 'success')
-      } else if (result.cancelled) {
-        emitOpResult(rop, installationId, 'cancelled_user')
-      } else if (result.portConflict) {
-        // Not terminal — the user resolves the conflict and a fresh op
-        // (with its own outcome) supersedes this one. No op.result here.
-      } else {
+      } else if (!result.cancelled && !result.portConflict) {
+        // A port conflict is not terminal — the user resolves it and a fresh
+        // op supersedes this one.
         rop.error = result.message || t('progress.unknownError')
         sessionStore.errorInstances.set(installationId, {
           installationName: rop.title,
           message: rop.error
         })
-        emitOpResult(rop, installationId, 'failed')
       }
     }).catch((err: Error) => {
       rop.error = err.message
@@ -353,7 +294,6 @@ export const useProgressStore = defineStore('progress', () => {
         installationName: rop.title,
         message: rop.error
       })
-      emitOpResult(rop, installationId, 'failed')
     })
   }
 

@@ -12,22 +12,19 @@ const SWITCH_DECISION: NavDecision = {
   window: 'same',
   verb: 'switch',
   primaryLabel: NAV_LABEL.start,
-  secondary: [],
-  telemetry: 'instance.switched'
+  secondary: []
 }
 const RESTART_DECISION: NavDecision = {
   window: 'same',
   verb: 'restart',
   primaryLabel: NAV_LABEL.restart,
-  secondary: [],
-  telemetry: null
+  secondary: []
 }
 const FOCUS_DECISION: NavDecision = {
   window: 'same',
   verb: 'focus',
   primaryLabel: NAV_LABEL.switch,
-  secondary: [],
-  telemetry: null
+  secondary: []
 }
 import type { SnapshotListData } from '../types/ipc'
 

@@ -27,10 +27,9 @@ export interface SeedOptions {
    *  `userData`, which on macOS ignores the HOME override entirely (see `appDataDir` below).
    *  Use a `E2E_*_SEED` env hook for those, as `settings` and `opsFlags` do. */
   onSetup?: (paths: { homeDir: string; appDataDir: string }) => Promise<void>
-  /** Seed `<configDir>/ops-flags.json` — the persisted ops-flag cache that `coreBetaGrants`
-   *  falls back to when PostHog is unreachable. Env-delivered rather than written here for the
-   *  same reason `settings` is: main is the only process that knows where that file lives on
-   *  every platform. */
+  /** Seed `<configDir>/ops-flags.json` — the local ops-flag file that `coreBetaGrants` reads.
+   *  Env-delivered rather than written here for the same reason `settings` is: main is the only
+   *  process that knows where that file lives on every platform. */
   opsFlags?: Record<string, unknown>
   /** Launch against this exact profile dir instead of a fresh mkdtemp one,
    *  with the same semantics as `LIFECYCLE_REUSE_DIR` (persisted settings are
@@ -118,7 +117,6 @@ function buildIsolatedEnv(
   // Always send a seed for a known-clean state; caller overrides win on merge.
   const effectiveSeed: Record<string, unknown> = {
     firstUseCompleted: false,
-    telemetryEnabled: false,
     ...(settingsSeed ?? {})
   }
   env['E2E_SETTINGS_SEED'] = JSON.stringify(effectiveSeed)
@@ -273,9 +271,6 @@ export async function launchLauncherApp(options?: SeedOptions): Promise<Launcher
     } catch {
       /* no settings yet on a first run against the reuse dir */
     }
-    // Safety invariant: a persisted profile must never re-enable telemetry
-    // under the harness. Callers can still override explicitly.
-    delete persistedSettings['telemetryEnabled']
   }
   const env = buildIsolatedEnv(
     homeDir,
