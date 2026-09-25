@@ -185,40 +185,20 @@ At runtime the main process picks a git backend in priority order ([`src/main/li
 
 ## Releasing
 
-> Production builds go through [ToDesktop](https://www.todesktop.com/) in CI — nothing is built locally. Any maintainer can cut a release; it's one workflow run plus a PR merge.
+Linux `.deb` releases are built in CI by [`release-deb.yml`](.github/workflows/release-deb.yml):
 
-**To ship a release:**
+1. Make sure `version` in `package.json` is the version you want to ship, and that it's on `main`.
+2. Tag the commit on `main` and push the tag:
 
-1. Open the **[Version Bump](../../actions/workflows/version-bump.yml)** workflow → **Run workflow**, and choose:
-   - **`channel`** — `stable` for a real release (promotes to **Latest**), or `rc` for a pre-release test build.
-   - **`bump`** — `patch` / `minor` / `major`.
-2. It opens a **`chore: bump version to vX.Y.Z`** PR, authored by **`cloud-code-bot`** and labeled **`Release`**.
-3. **Review, approve, and merge** that PR.
-4. The rest is automatic — merging tags `vX.Y.Z`, which triggers the ToDesktop build and ships the new version to Desktop users. No manual tagging, no draft to publish.
+   ```bash
+   git tag v1.1.2 origin/main
+   git push origin v1.1.2
+   ```
 
-<details>
-<summary><b>Pipeline &amp; config</b></summary>
+   (Or run **Actions → Release .deb → Run workflow** on `main` with the tag name.)
+3. The workflow builds the app, packages `Comfy-Desktop-<version>-linux-amd64.deb`, checks it contains the terminal's native module and the bundled Python, and publishes a GitHub release with the `.deb` and its SHA-256. A tag with a suffix (`v1.1.2-rc1`) becomes a pre-release.
 
-Three workflows in [`.github/workflows/`](.github/workflows/):
-
-| Workflow                    | Trigger                       | Role                                                                                                                                                  |
-| --------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version-bump.yml`          | manual (**Run workflow**)     | Opens the version-bump PR (bot-authored) and labels it `Release`.                                                                                     |
-| `release-from-pr-label.yml` | `pull_request_target: closed` | On merge of a `Release`-labeled PR, tags `vX.Y.Z` and dispatches the build.                                                                           |
-| `build-release.yml`         | push of a `v*` tag            | Runs `pnpm run build`, runs `todesktop build`, and publishes the GitHub Release (`stable` → Latest, `-rc` → pre-release).                             |
-
-CLI equivalent of step 1:
-
-```bash
-gh workflow run version-bump.yml -f channel=stable -f bump=patch
-```
-
-**GitHub Actions config:**
-
-- Variable `APP_ID` + secret `CLOUD_CODE_BOT_PRIVATE_KEY` — the `cloud-code-bot` GitHub App that opens the version-bump PR, so any maintainer can release without a personal token.
-- Secrets `TODESKTOP_ACCESS_TOKEN` and `TODESKTOP_EMAIL` (ToDesktop CLI).
-
-</details>
+The tag must match `package.json`'s version and point at a commit on `main`, or the workflow refuses to publish. Upstream's ToDesktop pipeline (`build-release.yml`) is kept for reference but only runs by hand; it needs Comfy-Org's secrets.
 
 ## Data &amp; Troubleshooting
 
