@@ -35,6 +35,7 @@ Comfy Desktop is the official desktop application for **ComfyUI**, the node-base
 - 🖥️ **Cross-platform** — Windows, macOS, and Linux.
 - ⬆️ **Built-in auto-updates** — the app keeps itself current.
 - 🛠️ **Works without system Git** — bundles a tiny Python + `pygit2` bootstrap so clones work on a clean machine.
+- ⌨️ **Built-in system terminal** — press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> anywhere in the app to drop down a login shell inside the window (press it again to hide it; `exit` ends the session). Made for kiosk setups such as [cage](https://github.com/cage-kiosk/cage), where a separate terminal window would cover the app.
 
 ## Download
 

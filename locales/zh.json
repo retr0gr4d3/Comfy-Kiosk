@@ -1715,5 +1715,10 @@
     "label": "等待期间",
     "cloudFailedTitle": "无法打开 Comfy Cloud",
     "cloudFailedMessage": "请检查网络连接，然后从主面板重试。"
+  },
+  "systemTerminal": {
+    "title": "终端",
+    "hint": "按 Ctrl+Alt+T 隐藏",
+    "close": "关闭终端"
   }
 }

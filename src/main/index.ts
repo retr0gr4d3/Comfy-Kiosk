@@ -22,6 +22,8 @@ import { getAppVersion } from './lib/ipc'
 import type { ExitCallbackInfo } from './lib/ipc'
 import { closeAllPopouts } from './lib/popoutWindows'
 import { disposeAllTerminals } from './lib/terminal'
+import { disposeSystemTerminal } from './lib/systemTerminal'
+import { installSystemTerminalShortcut } from './lib/systemTerminalShortcut'
 import * as updater from './lib/updater'
 import * as settings from './settings'
 import { installAppMenu } from './menu'
@@ -35,6 +37,7 @@ import { pruneCrashDumps } from './lib/crashDumps'
 import { createStartupReentryGate } from './lib/startupReentryGate'
 import { registerTitleTooltipIpc } from './popups/titleTooltip'
 import { registerTitleCoachmarkIpc } from './popups/titleCoachmark'
+import { registerSystemTerminalIpc, toggleSystemTerminal } from './popups/systemTerminalView'
 import {
   openSystemModal,
   openSystemModalAsync,
@@ -1434,6 +1437,8 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
         findEntryByHostWindow(parent)?.titleBarView.webContents ?? null
     })
     registerSystemModalIpc()
+    registerSystemTerminalIpc()
+    installSystemTerminalShortcut(toggleSystemTerminal)
 
     /**
      * Land `installationId` into `entry` (which must be chooser-shaped): ensure
@@ -2226,6 +2231,7 @@ if (app.isPackaged && !app.requestSingleInstanceLock()) {
       // here too and kill their shared shells so no window or PTY child lingers.
       closeAllPopouts()
       disposeAllTerminals()
+      disposeSystemTerminal()
       if (tray) {
         tray.destroy()
         tray = null

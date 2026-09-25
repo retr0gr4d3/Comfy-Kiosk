@@ -17,7 +17,7 @@ import { getActiveVenvDir, getActiveUvPath } from './pythonEnv'
  * inside Electron where the binding loads fine.
  */
 let ptyModulePromise: Promise<typeof NodePty> | undefined
-async function loadPty(): Promise<typeof NodePty> {
+export async function loadPty(): Promise<typeof NodePty> {
   ptyModulePromise ??= import('node-pty')
   const mod = await ptyModulePromise
   // node-pty is CJS: under esModuleInterop the API lives on the synthesized

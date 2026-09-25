@@ -1715,5 +1715,10 @@
     "label": "While you wait",
     "cloudFailedTitle": "Couldn't open Comfy Cloud",
     "cloudFailedMessage": "Check your connection and try again from the dashboard."
+  },
+  "systemTerminal": {
+    "title": "Terminal",
+    "hint": "Ctrl+Alt+T to hide",
+    "close": "Close terminal"
   }
 }
