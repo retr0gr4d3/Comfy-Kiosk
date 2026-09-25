@@ -1,6 +1,7 @@
 import { WebContentsView, ipcMain } from 'electron'
 import path from 'path'
 import { attachContextMenu } from '../lib/contextMenu'
+import { raiseSystemTerminalIfOpen } from '../popups/systemTerminalView'
 import { resolveTheme } from '../lib/ipc/shared'
 import { get as getSetting } from '../settings'
 import { TITLEBAR_BG } from '../lib/theme'
@@ -67,6 +68,8 @@ export function ensurePanelView(
   })
   panelView.setBackgroundColor(isOpaqueBodyMode(initialPanel) ? opaquePanelBg() : '#00000000')
   entry.window.contentView.addChildView(panelView)
+  // A system terminal open over the body must stay above the new panel.
+  raiseSystemTerminalIfOpen(entry.window)
   // Native right-click Copy/Paste for selectable text + inputs in panel bodies
   // (chooser, install forms, settings, etc.).
   attachContextMenu(entry.window, panelView.webContents)

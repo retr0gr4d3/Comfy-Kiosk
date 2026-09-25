@@ -23,7 +23,8 @@ export default defineConfig({
           comfyTitleBarPreload: resolve(__dirname, 'src/preload/comfyTitleBarPreload.ts'),
           comfyTitlePopupPreload: resolve(__dirname, 'src/preload/comfyTitlePopupPreload.ts'),
           comfyTitleTooltipPreload: resolve(__dirname, 'src/preload/comfyTitleTooltipPreload.ts'),
-          comfySystemModalPreload: resolve(__dirname, 'src/preload/comfySystemModalPreload.ts')
+          comfySystemModalPreload: resolve(__dirname, 'src/preload/comfySystemModalPreload.ts'),
+          systemTerminalPreload: resolve(__dirname, 'src/preload/systemTerminalPreload.ts')
         }
       }
     }
@@ -36,7 +37,8 @@ export default defineConfig({
           comfyTitleBar: resolve(__dirname, 'src/renderer/comfyTitleBar.html'),
           comfyTitlePopup: resolve(__dirname, 'src/renderer/comfyTitlePopup.html'),
           comfyTitleTooltip: resolve(__dirname, 'src/renderer/comfyTitleTooltip.html'),
-          comfySystemModal: resolve(__dirname, 'src/renderer/comfySystemModal.html')
+          comfySystemModal: resolve(__dirname, 'src/renderer/comfySystemModal.html'),
+          systemTerminal: resolve(__dirname, 'src/renderer/systemTerminal.html')
         }
       }
     },

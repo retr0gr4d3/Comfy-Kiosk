@@ -31,6 +31,7 @@ import * as settings from '../settings'
 import * as updater from '../lib/updater'
 import { getSavedBounds, getWindowOptions, saveWindowBounds } from '../lib/windowState'
 import { ensureSystemModal } from '../popups/systemModal'
+import { raiseSystemTerminalIfOpen } from '../popups/systemTerminalView'
 import { hideCheckoutBackdrop, showCheckoutBackdrop } from '../popups/checkoutBackdrop'
 import { hideTitlePopupForParent, prewarmTitlePopup } from '../popups/titlePopup'
 import { destroyPanelView, ensurePanelView } from './panelView'
@@ -1149,6 +1150,7 @@ export function rebuildComfyViewIfNeeded(
     entry.windowKey
   )
   entry.window.contentView.addChildView(newView)
+  raiseSystemTerminalIfOpen(entry.window)
   oldView.setVisible(false)
   entry.window.contentView.removeChildView(oldView)
   if (!oldView.webContents.isDestroyed()) oldView.webContents.close()
