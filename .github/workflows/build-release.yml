@@ -1,5 +1,9 @@
 name: ToDesktop Build & Release
 
+# Upstream's ToDesktop pipeline (needs Comfy-Org's ToDesktop/GCP secrets). This
+# fork publishes Linux releases with release-deb.yml, which owns `v*` tags, so
+# this workflow only runs when started by hand.
+
 on:
   workflow_dispatch:
     inputs:
@@ -8,9 +12,6 @@ on:
         required: false
         type: string
         default: ''
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: write
